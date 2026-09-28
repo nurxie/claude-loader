@@ -1,5 +1,7 @@
 # Claude Loader
 
+![Claude Loader](claude-loader-banner.png)
+
 **One hotkey, all your Claude accounts.** Claude Loader is a loader, launcher
 and profile manager for Claude Desktop and the Claude Code CLI. Work with
 several accounts (Team, Personal, client projects) and run their agents at the
@@ -10,9 +12,10 @@ same time, without signing out and back in.
   The hotkey is yours to change, from two to four keys.
 - **Launcher:** colored shortcuts, a tray menu, autostart at sign-in and a
   `claude-<name>` command per profile.
-- **Token usage:** a window with a bar per profile — how much of the 5-hour
-  window is gone, when it resets, and where the week went, by model.
-  *(Windows for now.)*
+- **Token usage:** every profile shows the account it is signed in as and how
+  much of its 5-hour window is gone, with a window of its own for the detail —
+  when exactly it resets, where the week went, by model — and a warning before
+  you run out. The figures come from each account, not from guesswork.
 - **Manager:** add, recolor, lock or remove profiles, recreate shortcuts you
   deleted by accident, keep the Claude copy up to date, and uninstall cleanly.
   Claude Loader also tells you when a new version of itself is out and installs
@@ -25,7 +28,7 @@ and the CLI share one login per profile and never mix with the others.
 | Version | For | What you get |
 | --- | --- | --- |
 | [**Windows**](windows/README.md) | Windows 10/11 | Up to 5 profiles, a hotkey loader, a tray menu, colored icons, optional passwords, `claude-<name>` CLI commands, the token usage window |
-| [**Linux**](linux/README.md) | Ubuntu 24.04+ (GNOME) | The same, with a native GTK loader and GNOME hotkey; token usage as a terminal table for now |
+| [**Linux**](linux/README.md) | Ubuntu 22.04+ (GNOME) | The same, with a native GTK loader, GNOME hotkey and its own token usage window |
 | [**Windows legacy**](windows/legacy/README.md) | Windows 10/11 | Just two Desktop shortcuts (TEAM / Personal), no installation |
 
 > **Unofficial.** This project is not affiliated with or endorsed by Anthropic.
@@ -75,9 +78,9 @@ independent instance that can run next to the others.
 
 Each profile also gets its own `CLAUDE_CONFIG_DIR`, so the Desktop app's Code
 tab and the profile's `claude-<name>` command share one Claude Code config
-that no other profile touches. That folder is also where the token counts come
-from: Claude Code records what every message cost, so the usage window adds it
-up without asking anyone anything.
+that no other profile touches. That folder also holds the profile's sign-in,
+which is how the usage window can ask *that* account how much of its limit is
+left and when the window resets — figures no file on the machine knows.
 
 One profile may keep using Claude's **standard folders**, which keeps the login
 you already have.
@@ -104,14 +107,20 @@ The OS pages explain both.
 ```
 README.md                  this page
 LICENSE                    MIT
+docs/ARCHITECTURE.md       how it is built, for reading or changing the code
 cross-platform/            shared core (Python): profiles, passwords, icons,
-                           launching, link routing, terminal wizard/manager
+                           launching, link routing, token figures, wizard/manager
 linux/                     Linux part + install.sh
 windows/                   Windows part + Install.cmd / install.ps1
 windows/legacy/            the original two-shortcut PowerShell script
+tests/                     python3 -m unittest discover -s tests -t tests
 ```
 
-See [cross-platform/README.md](cross-platform/README.md) for the design and
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** is the technical documentation:
+the two settings the whole thing rests on, how the core and the OS parts are
+split, what happens when you start a profile or read the token figures, what
+leaves the machine, and what each system does differently.
+[cross-platform/README.md](cross-platform/README.md) is the short version, with
 the `config.json` format.
 
 ---

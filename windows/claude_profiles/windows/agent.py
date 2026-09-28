@@ -6,10 +6,13 @@ off, or when claude-profiles is uninstalled.
 """
 
 import ctypes
+import threading
+import time
 from ctypes import wintypes
 
 from ..core import config as cfgmod
 from ..core import paths
+from ..core import usage as usagemod
 from . import hotkeys, integration, winutil
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -24,14 +27,16 @@ WM_NULL, WM_DESTROY, WM_COMMAND, WM_TIMER = 0x0000, 0x0002, 0x0111, 0x0113
 WM_HOTKEY, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP = 0x0312, 0x007B, 0x0202, 0x0205
 WM_APP = 0x8000
 WM_TRAY = WM_APP + 1
+WM_USAGE = WM_APP + 2
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x1, 0x2, 0x4, 0x10
-NIIF_WARNING = 0x2
+NIIF_WARNING, NIIF_INFO = 0x2, 0x1
 IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 MF_STRING, MF_GRAYED, MF_CHECKED, MF_SEPARATOR = 0x0, 0x1, 0x8, 0x800
 TPM_RIGHTBUTTON, TPM_RETURNCMD = 0x2, 0x100
 IDI_APPLICATION = 32512
 HOTKEY_ID, TIMER_ID = 1, 1
+USAGE_EVERY = 180        # seconds between usage checks
 CMD_OPEN, CMD_QUIT, CMD_ALL, CMD_GROUP, CMD_USAGE, CMD_PROFILE = 1, 2, 3, 4, 5, 100
 
 
@@ -110,6 +115,10 @@ class Agent:
         self.hicon = None
         self._wndproc = WNDPROC(self._proc)  # keep a reference for the lifetime of the window
         self.taskbar_created = 0
+        self.alerts = usagemod.Alerts(self.cfg.usage_alert_percent if self.cfg else 0)
+        self.usage_checked = 0.0
+        self.usage_busy = False
+        self.pending = []          # warnings waiting to be shown on the UI thread
 
     # --- lifetime --------------------------------------------------------------------
 
@@ -169,7 +178,7 @@ class Agent:
         if not self.hicon:
             self.hicon = user32.LoadIconW(None, ctypes.c_void_p(IDI_APPLICATION))
 
-    def _tray(self, action: int, info: str = "") -> None:
+    def _tray(self, action: int, info: str = "", icon: int = NIIF_WARNING) -> None:
         nid = NOTIFYICONDATAW()
         nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
         nid.hWnd = self.hwnd
@@ -186,7 +195,7 @@ class Agent:
             nid.uFlags |= NIF_INFO
             nid.szInfo = info[:255]
             nid.szInfoTitle = "Claude Loader"
-            nid.dwInfoFlags = NIIF_WARNING
+            nid.dwInfoFlags = icon
         shell32.Shell_NotifyIconW(action, ctypes.byref(nid))
 
     # --- hotkey -------------------------------------------------------------------------
@@ -274,9 +283,11 @@ class Agent:
                 return
             if self.cfg and self.cfg.loader.hotkey != old_hotkey:
                 self._register_hotkey()
+            self.alerts.percent = self.cfg.usage_alert_percent if self.cfg else 0
         if not self.should_run():
             user32.DestroyWindow(self.hwnd)
             return
+        self.check_usage()
         # Claude writes its own claude:// handler each time it starts; put ours back.
         if self.cfg.url_handler and not integration.url_handler_is_ours():
             previous = self.cfg.previous_url_handler
@@ -287,6 +298,45 @@ class Agent:
                     self.mtime = cfgmod.mtime()
             except OSError:
                 pass
+
+    # --- warning when a window is nearly full --------------------------------------------------
+
+    def check_usage(self) -> None:
+        """Read the limits now and then, and say so once per window when one is nearly full.
+
+        The agent is the only process that outlives the loader, so the warning
+        belongs here. Reading talks to the network, so it happens on a thread;
+        the balloon itself is raised back on this one.
+        """
+        if self.usage_busy or not self.cfg or self.alerts.percent <= 0:
+            return
+        if time.time() - self.usage_checked < USAGE_EVERY:
+            return
+        self.usage_checked = time.time()
+        self.usage_busy = True
+        cfg = self.cfg
+
+        def work():
+            try:
+                warnings = []
+                for data in usagemod.collect_all(cfg):
+                    message = self.alerts.due(data)
+                    if message:
+                        warnings.append(f"{data.name}: {message}")
+            except Exception:
+                warnings = []
+            finally:
+                self.usage_busy = False
+            if warnings:
+                # Queued before the message is posted, so it is never handled early.
+                self.pending.extend(warnings)
+                user32.PostMessageW(self.hwnd, WM_USAGE, 0, 0)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_pending(self) -> None:
+        while self.pending:
+            self._tray(NIM_MODIFY, self.pending.pop(0), NIIF_INFO)
 
     # --- window procedure ----------------------------------------------------------------------
 
@@ -304,6 +354,9 @@ class Agent:
                 return 0
             if msg == WM_TIMER:
                 self.tick()
+                return 0
+            if msg == WM_USAGE:
+                self.show_pending()
                 return 0
             if msg == self.taskbar_created and msg:
                 self._tray(NIM_ADD)

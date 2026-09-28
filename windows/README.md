@@ -120,6 +120,20 @@ Desktop shortcuts (for the profiles and for the loader itself), PATH, loader
 password, link routing, Claude Loader's own updates, the token usage source,
 recreating shortcuts and uninstalling.
 
+**Which account is which.** Each profile's card names the account it is signed
+in as - the e-mail and the organization - once it has been asked. That is the
+thing you cannot see from the outside: five profiles look alike until one of
+them turns out to be the wrong login. If two profiles end up in the same
+account, the loader says so.
+
+**At a glance.** Under the name, a thin bar shows how much of that profile's
+five-hour window is gone, amber from 75 % and red from 90 %, so you can see the
+state of every account without opening anything.
+
+**A warning before you run out.** At 90 % of a window you get one desktop
+notification per profile per window, with the time it resets. Turn it off in
+Settings, or set `usage_alert_percent` to 0 in `config.json`.
+
 ### Changing the hotkey
 
 **Settings › Hotkey › Change…**, then press the combination you want. It takes
@@ -229,23 +243,40 @@ Each profile gets two bars:
 
 The bar turns amber at 75 % and red at 90 %. It refreshes itself every minute.
 
-**Where the numbers come from.** Claude Code records what every message cost,
-in the profile's own config folder. Claude Loader adds that up. Nothing is sent
-anywhere, no sign-in is needed, and it works with Claude closed. Two honest
-limits follow from that:
+> **A profile signed in only in the Claude app has no figures yet.** The app's
+> Code tab keeps its session inside the app's own encrypted storage, so there is
+> no token for Claude Loader to read. The profile still shows *which* account it
+> is — Claude Code records that either way — but the percentages stay empty
+> until you sign that profile's terminal command in once:
+>
+> ```
+> claude-work          # then /login, once per profile
+> ```
+>
+> After that the account answers and the bars fill in. Signing in through the
+> terminal does not sign you out of the app; they share the profile's folder.
 
-- It counts the **Claude Code CLI and the Desktop app's Code tab**, which share
-  a profile's config folder. Chat in the Desktop app is not recorded by Claude
-  Code, so it is not counted.
-- Your plan's actual allowance is not written down anywhere on your PC. Set it
-  per profile under **Limits…** — that is what the bar fills against. Until you
-  do, the busiest window seen so far stands in for it and the window says so;
-  with no history at all there is no bar, only the amount used.
+**Where the numbers come from.** The percentages and the reset times are asked
+from each profile's own account, over HTTPS, with the sign-in that profile
+already keeps in its folder. That is the only place they exist: a plan's
+allowance is not written down anywhere on your PC, and neither is the moment a
+window resets.
 
-**Exact limits (experimental).** Settings has a switch to ask your account for
-the real remaining limits instead of counting. It only works when the profile
-keeps its sign-in in its own folder, which Windows often does not, and it falls
-back to counting whenever it cannot. It is off by default.
+Alongside that, Claude Loader reads the Claude Code transcripts in the
+profile's config folder for the detail the account does not return - which
+models the tokens went to, and how many messages. That covers the **Claude Code
+CLI and the Desktop app's Code tab**, which share the folder; chat in the
+Desktop app is not recorded by Claude Code, so it is not counted there.
+
+If an account cannot be reached - the profile has never been started, the
+sign-in has expired, Windows keeps that profile's sign-in somewhere other than
+its own folder, there is no network - the window says so in one sentence and
+falls back to the local count. The bar then fills against whatever you set
+under **Limits...**, or against the busiest window seen so far.
+
+Nothing is sent anywhere but Anthropic, and nothing read is stored, logged or
+shown. To turn the requests off, use the switch in Settings, or pass
+`claude-profiles usage --local`.
 
 ---
 
@@ -376,12 +407,18 @@ Cowork at a time. Chat and the Code tab aren't affected.
   link routing, the copy/update logic, and the setup wizard, manager and
   uninstaller (including taking over `Claude-Personal`). The loader and all
   its dialogs were rendered and checked in light, dark and standard themes.
-- Added in 0.3.0 and checked on a real machine: the two-to-four-key rule over a
-  table of valid and invalid combinations, the token window and its limits
-  dialog (built and painted, with and without limits), `claude-profiles usage`
-  against real transcripts, the update check against the live GitHub API, and a
-  full self-update of a real release into a sandbox folder.
-- **Not yet tested for real:** the tray agent (hotkey, tray menu), starting
-  real Claude instances from the loader, `claude://` routing with a real
-  Google sign-in, the classic (Squirrel) installer, and the experimental
-  "exact limits" switch, which has never reached a live endpoint.
+- Also checked on a real machine: the two-to-four-key rule over a table of
+  valid and invalid combinations, the token window and its limits dialog (built
+  and painted, with and without limits), `claude-profiles usage` against real
+  transcripts, the update check against the live GitHub API, and a full
+  self-update of a real release into a sandbox folder.
+- The account figures, the per-profile identity and the near-the-limit warning
+  were written against a live Anthropic endpoint and verified end to end **on
+  Linux**; the shared half of that code is covered by the test suite on every
+  system.
+- **Not yet tested for real on Windows:** the tray agent (hotkey, tray menu and
+  its warning balloon), the usage bar on the loader cards, starting real Claude
+  instances from the loader, `claude://` routing with a real Google sign-in, and
+  the classic (Squirrel) installer.
+
+How it all fits together, for reading or changing the code: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).

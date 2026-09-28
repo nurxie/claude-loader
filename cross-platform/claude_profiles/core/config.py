@@ -10,7 +10,9 @@ from typing import List, Optional
 from . import paths
 
 MAX_PROFILES = 5
-CONFIG_VERSION = 1
+# 2: `usage_online` changed meaning - it used to turn on an experimental extra,
+#    and now it is how the token figures are obtained at all (see usage.py).
+CONFIG_VERSION = 2
 
 # key -> (label, target hue in degrees or None, saturation factor, swatch)
 # "original" keeps the icon as shipped.
@@ -118,11 +120,15 @@ class Config:
     path_added: bool = False
     # Profiles started automatically when you sign in to the computer.
     autostart_profiles: List[str] = field(default_factory=list)
-    # Ask Claude for the exact remaining limits instead of counting locally.
-    # Experimental: it needs a credentials file the CLI does not always write.
-    usage_online: bool = False
-    # Where that request goes, in case the address ever changes (see usage_online.py).
+    # Ask the account for the real limits (percentages and reset times) instead
+    # of guessing them from the local token count. Needs the profile to be
+    # signed in; falls back to counting whenever it cannot be reached.
+    usage_online: bool = True
+    # Where those requests go, in case the addresses ever change (see usage_online.py).
     usage_url: str = ""
+    profile_url: str = ""
+    # Warn when this much of a five-hour window is gone. 0 turns the warning off.
+    usage_alert_percent: int = 90
     version: int = CONFIG_VERSION
 
     # --- lookup helpers -------------------------------------------------
@@ -190,6 +196,8 @@ class Config:
             for value in (p.usage_limit, p.usage_weekly_limit):
                 if not isinstance(value, int) or value < 0:
                     raise ConfigError(f"Token limits of '{p.name}' must be 0 or more.")
+        if not isinstance(self.usage_alert_percent, int) or not 0 <= self.usage_alert_percent <= 100:
+            raise ConfigError("The usage warning must be a percentage from 0 to 100.")
 
 
 # --- load / save ------------------------------------------------------------
@@ -214,9 +222,22 @@ def load() -> Optional[Config]:
                                  if k in known_loader}),
         **{k: v for k, v in raw.items() if k in known_config},
     )
+    _migrate(cfg, raw)
     cfg.validate()
     cfg.prune()
     return cfg
+
+
+def _migrate(cfg: Config, raw: dict) -> None:
+    """Bring an older config up to date. Saving it back is up to the caller."""
+    was = raw.get("version")
+    was = was if isinstance(was, int) else 1
+    if was < 2:
+        # `usage_online: false` used to mean "leave the experiment off". Asking
+        # the account is now the only way to know a plan's real figures, and it
+        # falls back to counting by itself, so there is nothing left to opt out of.
+        cfg.usage_online = True
+    cfg.version = CONFIG_VERSION
 
 
 def save(cfg: Config) -> None:

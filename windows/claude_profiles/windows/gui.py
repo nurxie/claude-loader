@@ -18,12 +18,14 @@ import winreg
 from ..core import REPO, VERSION
 from ..core import config as cfgmod
 from ..core import icons, launch, paths, security, selfupdate
+from ..core import usage as usagemod
 from ..core.tui import profile_folders
 from . import hotkeys, integration, winutil
 
 TITLE = integration.LOADER_TITLE
 LOADER_MUTEX = "ClaudeProfilesLoader"
 _PLAT = None  # set by run_loader()
+USAGE_REFRESH_MS = 180_000
 
 GLYPHS = {"lock": "", "check": "", "more": "", "menu": "",
           "add": ""}
@@ -88,6 +90,34 @@ class Theme:
 
 _theme: Optional[Theme] = None
 _images = {}  # keep PhotoImage references alive
+
+
+def level_color(share: Optional[float]) -> str:
+    """Green, amber, red - how alarming a filled bar should look."""
+    theme = _theme
+    if share is None:
+        return theme.sub
+    if share >= 0.9:
+        return "#c42b1c" if theme.light else "#ff99a4"
+    if share >= 0.75:
+        return "#9a6700" if theme.light else "#e3b341"
+    return theme.success
+
+
+class Bar(tk.Canvas):
+    """A flat progress bar that colours itself as it fills up."""
+
+    def __init__(self, parent, width: int, height: int = 9, bg: Optional[str] = None):
+        super().__init__(parent, width=width, height=height, highlightthickness=0,
+                         bg=bg or _theme.bg, bd=0)
+        self._width, self._height = width, height
+
+    def set(self, share: Optional[float]) -> None:
+        self.delete("all")
+        self.create_rectangle(0, 0, self._width, self._height, fill=_theme.border, outline="")
+        if share and share > 0:
+            filled = max(3, int(self._width * min(1.0, share)))
+            self.create_rectangle(0, 0, filled, self._height, fill=level_color(share), outline="")
 
 
 def profile_image(root, profile, size: int) -> tk.PhotoImage:
@@ -577,9 +607,15 @@ class SettingsDialog(Dialog):
         ttk.Label(b, text="Token usage", font=("Segoe UI Semibold", 11)).pack(anchor="w",
                                                                              pady=(14, 0))
         self.usage_online = tk.BooleanVar(value=cfg.usage_online)
-        ttk.Checkbutton(b, text="Ask Claude for the exact limits instead of counting "
-                               "locally (experimental)",
+        ttk.Checkbutton(b, text="Ask each profile's account for its real limits and reset "
+                               "times (falls back to counting)",
                         variable=self.usage_online).pack(anchor="w")
+        # Kept as a percentage in the config, so an edited value survives the checkbox.
+        self._alert_percent = cfg.usage_alert_percent or 90
+        self.usage_alert = tk.BooleanVar(value=cfg.usage_alert_percent > 0)
+        ttk.Checkbutton(b, text=f"Warn from the tray at {self._alert_percent}% of a "
+                               "5-hour window",
+                        variable=self.usage_alert).pack(anchor="w")
 
         ttk.Label(b, text="Maintenance", font=("Segoe UI Semibold", 11)).pack(anchor="w",
                                                                             pady=(14, 2))
@@ -673,6 +709,7 @@ class SettingsDialog(Dialog):
         loader.check_app_updates = self.app_updates.get()
         loader.desktop_shortcut = self.loader_desktop.get()
         self.cfg.usage_online = self.usage_online.get()
+        self.cfg.usage_alert_percent = self._alert_percent if self.usage_alert.get() else 0
         self.cfg.desktop_shortcuts = self.desktop.get()
         if self.cfg.path_added and not self.path.get():
             winutil.remove_from_user_path(paths.BIN_DIR)
@@ -762,8 +799,18 @@ class ProfileCard(tk.Frame):
         self.name = tk.Label(self, text=profile.name, bg=t.card, fg=t.text,
                              font=("Segoe UI Semibold", 10), wraplength=int(130 * t.scale))
         self.name.pack(pady=(6, 0))
-        self.status = tk.Label(self, text="", bg=t.card, fg=t.sub, font=("Segoe UI", 8))
+        self.status = tk.Label(self, text=profile.cli_command if profile.cli else "",
+                               bg=t.card, fg=t.sub, font=("Segoe UI", 8),
+                               wraplength=int(130 * t.scale))
         self.status.pack()
+        self.usage_row = tk.Frame(self, bg=t.card)
+        self.usage_bar = Bar(self.usage_row, int(58 * t.scale), height=6, bg=t.card)
+        self.usage_bar.pack(side="left", pady=(3, 0))
+        self.usage_label = tk.Label(self.usage_row, text="", bg=t.card, fg=t.sub,
+                                    font=("Segoe UI", 8))
+        self.usage_label.pack(side="left", padx=(5, 0))
+        # Running is a corner badge now, so the line above can name the account.
+        self.running = tk.Label(self, text="●", bg=t.card, fg=t.success, font=("Segoe UI", 9))
         self.check = tk.Label(self, bg=t.accent, fg="#ffffff",
                               **t.glyph("check", "✓"))
         more = tk.Label(self, bg=t.card, fg=t.sub, cursor="hand2", **t.glyph("more", "···"))
@@ -774,7 +821,7 @@ class ProfileCard(tk.Frame):
         if profile.password:
             self.lock = tk.Label(self, bg=t.card, fg=t.sub, **t.glyph("lock", "locked"))
             self.lock.place(x=2, y=2, anchor="nw")
-        for w in (self, self.icon, self.name, self.status):
+        for w in (self, self.icon, self.name, self.status, self.usage_label):
             w.bind("<ButtonPress-1>", self._press)
             w.bind("<ButtonRelease-1>", self._release)
             w.bind("<Button-3>", lambda e: self.loader.card_menu(self.profile, e))
@@ -801,9 +848,11 @@ class ProfileCard(tk.Frame):
     def _paint(self, hover: bool = False) -> None:
         t = _theme
         bg = t.selected if self.selected else (t.hover if hover else t.card)
-        for w in (self, self.icon, self.name, self.status, self.more, self.lock):
+        for w in (self, self.icon, self.name, self.status, self.more, self.lock,
+                  self.running, self.usage_row, self.usage_label):
             if w is not None:
                 w.configure(bg=bg)
+        self.usage_bar.configure(bg=bg)
         self.configure(highlightbackground=t.accent if self.selected else t.border,
                        highlightcolor=t.accent if self.selected else t.border)
 
@@ -818,10 +867,23 @@ class ProfileCard(tk.Frame):
 
     def set_running(self, running: bool) -> None:
         if running:
-            self.status.configure(text="● running", fg=_theme.success)
+            self.running.place(relx=1.0, rely=1.0, x=-4, y=-2, anchor="se")
+            self.running.lift()
         else:
-            self.status.configure(text=self.profile.cli_command if self.profile.cli else "",
-                                  fg=_theme.sub)
+            self.running.place_forget()
+
+    def set_usage(self, data) -> None:
+        """Show the account and how full its window is, once that is known."""
+        who = data.account_label if data else ""
+        if who:
+            self.status.configure(text=who)
+        share = data.share if data else None
+        if share is None:
+            self.usage_row.pack_forget()
+            return
+        self.usage_row.pack()
+        self.usage_bar.set(share)
+        self.usage_label.configure(text=usagemod.percent(share), fg=level_color(share))
 
 
 class Loader:
@@ -863,6 +925,7 @@ class Loader:
 
         # A second banner, for updates of Claude Loader itself.
         self.app_update: Optional[dict] = None
+        self.usage_data = {}
         self.app_banner = ttk.Frame(root, padding=(18, 6))
         self.app_banner_label = ttk.Label(self.app_banner, text="",
                                           wraplength=int(360 * t.scale))
@@ -943,6 +1006,8 @@ class Loader:
         else:
             self.bar.pack_forget()
         self._refresh_running()
+        for pid, card in self.cards.items():
+            card.set_usage(self.usage_data.get(pid))
         self._update_selection_ui()
         self._fit_window()
 
@@ -990,6 +1055,8 @@ class Loader:
             self.check_updates(manual=False)
         if self.cfg.loader.check_app_updates:
             self.check_app_updates(manual=False)
+        self.refresh_usage()
+        self.root.after(USAGE_REFRESH_MS, self._usage_timer)
 
     # --- running state -----------------------------------------------------------
 
@@ -1004,6 +1071,33 @@ class Loader:
     def _refresh_running_timer(self) -> None:
         self._refresh_running()
         self.root.after(3000, self._refresh_running_timer)
+
+    # --- token usage on the cards ------------------------------------------------------
+
+    def refresh_usage(self) -> None:
+        """Ask each account how full its window is, without holding up the window.
+
+        The tray agent owns the warnings, because it is the process that outlives
+        this window; here the figures only go on the cards.
+        """
+        if self.locked or not self.cfg.profiles:
+            return
+        cfg = self.cfg
+        self._in_thread(lambda: usagemod.collect_all(cfg), self._usage_ready)
+
+    def _usage_ready(self, collected, error) -> None:
+        if error or not collected:
+            return
+        self.usage_data = {d.profile_id: d for d in collected}
+        for pid, card in self.cards.items():
+            card.set_usage(self.usage_data.get(pid))
+        for label, names in usagemod.shared_accounts(collected).items():
+            self.toast(f"{' and '.join(names)} are signed in to the same account ({label}).",
+                       6000)
+
+    def _usage_timer(self) -> None:
+        self.refresh_usage()
+        self.root.after(USAGE_REFRESH_MS, self._usage_timer)
 
     # --- selection --------------------------------------------------------------------
 

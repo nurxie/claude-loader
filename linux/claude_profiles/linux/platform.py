@@ -174,12 +174,12 @@ class LinuxPlatform(Platform):
                 ("claude:// handler", integration.current_url_handler() or "unknown"),
                 ("gsettings", shutil.which("gsettings") or "missing")]
         try:
-            import gi
-            gi.require_version("Gtk", "4.0")
-            gi.require_version("Adw", "1")
-            from gi.repository import Adw, Gtk
-            rows.append(("GTK / libadwaita", f"{Gtk.get_major_version()}.{Gtk.get_minor_version()}"
-                                             f" / {Adw.get_major_version()}.{Adw.get_minor_version()}"))
+            from . import compat
+            rows.append(("GTK / libadwaita", compat.versions()))
+            stood_in = compat.missing()
+            rows.append(("Widget compatibility",
+                         "standing in for " + ", ".join(stood_in) if stood_in
+                         else "everything is native"))
         except (ImportError, ValueError) as e:
             rows.append(("GTK / libadwaita", f"missing ({e})"))
         return rows
@@ -197,7 +197,20 @@ class LinuxPlatform(Platform):
         from . import gui
         return gui
 
-    def open_loader(self) -> None:
-        subprocess.Popen([str(paths.MAIN_CMD), "loader"], start_new_session=True,
+    def _spawn(self, *args: str) -> None:
+        subprocess.Popen([str(paths.MAIN_CMD), *args], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, cwd=str(paths.HOME))
+
+    def open_loader(self) -> None:
+        self._spawn("loader")
+
+    has_usage_window = True
+
+    def run_usage_window(self, cfg) -> int:
+        from . import usage_window
+        return usage_window.run(self)
+
+    def open_usage_window(self) -> None:
+        """Open it as a separate process (from the loader's menu)."""
+        self._spawn("usage")

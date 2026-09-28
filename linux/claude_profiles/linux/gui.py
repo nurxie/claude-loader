@@ -14,11 +14,13 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from ..core import VERSION  # noqa: E402
 from ..core import config as cfgmod  # noqa: E402
 from ..core import launch, paths, security  # noqa: E402
+from ..core import usage as usagemod  # noqa: E402
 from ..core.tui import profile_folders  # noqa: E402
-from . import integration, system  # noqa: E402
+from . import compat, integration, system  # noqa: E402
 
 APP_ID = integration.LOADER_APP_ID
 _PLAT = None  # set by run_loader()
+USAGE_REFRESH_SECONDS = 180
 
 CSS = """
 .profile-card {
@@ -41,9 +43,14 @@ CSS = """
 }
 .badge.check { background: @accent_bg_color; color: @accent_fg_color; }
 .badge.lock { background: alpha(@window_bg_color, 0.9); }
-.running-dot { color: @success_color; }
+.badge.running { background: @success_color; color: @window_bg_color; }
+.usage-bar trough, .usage-bar progress { min-height: 8px; border-radius: 4px; }
+.usage-bar.level-warn progress { background: #e5a50a; }
+.usage-bar.level-high progress { background: #e01b24; }
 .hint { opacity: 0.65; }
 .capture-key { font-size: 20px; font-weight: bold; }
+/* Stands in for Adw.Banner where libadwaita is too old (see compat.py). */
+.banner-fallback { background: alpha(@accent_bg_color, 0.15); }
 """
 
 _css_loaded = False
@@ -53,13 +60,7 @@ def _load_css() -> None:
     global _css_loaded
     if _css_loaded:
         return
-    provider = Gtk.CssProvider()
-    if hasattr(provider, "load_from_string"):
-        provider.load_from_string(CSS)
-    else:
-        provider.load_from_data(CSS.encode("utf-8"), -1)
-    Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    compat.load_css(CSS)
     _css_loaded = True
 
 
@@ -84,23 +85,7 @@ def _profile_icon(profile, size: int) -> Gtk.Image:
 
 def confirm(parent, heading: str, body: str, responses, callback: Callable[[str], None]) -> None:
     """responses: [(id, label, destructive_or_suggested_or_None)], first is the cancel one."""
-    if hasattr(Adw, "AlertDialog"):
-        dialog = Adw.AlertDialog.new(heading, body)
-    else:
-        dialog = Adw.MessageDialog.new(parent, heading, body)
-    for rid, label, look in responses:
-        dialog.add_response(rid, label)
-        if look == "destructive":
-            dialog.set_response_appearance(rid, Adw.ResponseAppearance.DESTRUCTIVE)
-        elif look == "suggested":
-            dialog.set_response_appearance(rid, Adw.ResponseAppearance.SUGGESTED)
-    dialog.set_close_response(responses[0][0])
-    dialog.set_default_response(responses[0][0])
-    dialog.connect("response", lambda _d, rid: callback(rid))
-    if hasattr(Adw, "AlertDialog") and isinstance(dialog, Adw.AlertDialog):
-        dialog.present(parent)
-    else:
-        dialog.present()
+    compat.alert(parent, heading, body, responses, callback)
 
 
 def _dialog_window(parent, title: str, width=460, height=-1) -> Adw.Window:
@@ -155,8 +140,8 @@ class PasswordWindow:
         buttons.append(ok)
         box.append(buttons)
 
-        view = Adw.ToolbarView()
-        header = Adw.HeaderBar(show_title=False)
+        view = compat.ToolbarView()
+        header = compat.header_bar(show_title=False)
         view.add_top_bar(header)
         view.set_content(box)
         self.win.set_content(view)
@@ -234,7 +219,7 @@ def choose_profile_blocking(profiles, question: str):
             row.connect("activated", lambda _r, p=p: pick(p))
             listbox.append(row)
         box.append(listbox)
-        view = Adw.ToolbarView()
+        view = compat.ToolbarView()
         view.add_top_bar(Adw.HeaderBar())
         view.set_content(box)
         win.set_content(view)
@@ -265,8 +250,8 @@ def capture_hotkey(parent, on_done: Callable[[Optional[str]], None]) -> None:
     hint = Gtk.Label(label="Use at least one of Ctrl, Alt or Super. Esc cancels.", wrap=True)
     hint.add_css_class("hint")
     box.append(hint)
-    view = Adw.ToolbarView()
-    view.add_top_bar(Adw.HeaderBar(show_title=False))
+    view = compat.ToolbarView()
+    view.add_top_bar(compat.header_bar(show_title=False))
     view.set_content(box)
     win.set_content(view)
 
@@ -312,7 +297,7 @@ class ProfileDialog:
         title = "Add profile" if self.is_new else f"Edit {profile.name}"
         self.win = _dialog_window(parent, title, width=520, height=640)
 
-        view = Adw.ToolbarView()
+        view = compat.ToolbarView()
         header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _b: self.win.close())
@@ -331,7 +316,7 @@ class ProfileDialog:
 
         # Profile
         group = Adw.PreferencesGroup(title="Profile")
-        self.name_row = Adw.EntryRow(title="Name")
+        self.name_row = compat.EntryRow(title="Name")
         self.name_row.set_text(profile.name if profile else self._default_name())
         group.add(self.name_row)
         self.color_row = Adw.ComboRow(title="Icon color")
@@ -363,7 +348,7 @@ class ProfileDialog:
             group.add(self.path_row)
         else:
             row = Adw.ActionRow(title="Folder", subtitle=profile.data_location)
-            row.set_subtitle_selectable(True)
+            compat.set_subtitle_selectable(row)
             group.add(row)
             note = Adw.ActionRow(title="The folder of an existing profile cannot be changed",
                                  subtitle="Create a new profile to use a different folder.")
@@ -376,20 +361,20 @@ class ProfileDialog:
             title="Password",
             description="A simple lock: the loader and the menu entry ask for it before "
                         "starting this profile. Files are not encrypted.")
-        self.pw_switch = Adw.SwitchRow(title="Ask for a password")
+        self.pw_switch = compat.SwitchRow(title="Ask for a password")
         self.pw_switch.set_active(bool(profile and profile.password))
         group.add(self.pw_switch)
-        self.pw1 = Adw.PasswordEntryRow(title="New password" if self.is_new or not
+        self.pw1 = compat.PasswordEntryRow(title="New password" if self.is_new or not
                                         (profile and profile.password) else
                                         "New password (empty keeps the current one)")
-        self.pw2 = Adw.PasswordEntryRow(title="Repeat password")
+        self.pw2 = compat.PasswordEntryRow(title="Repeat password")
         group.add(self.pw1)
         group.add(self.pw2)
         page.add(group)
 
         # CLI
         group = Adw.PreferencesGroup(title="Terminal")
-        self.cli_switch = Adw.SwitchRow(title="Claude Code terminal command")
+        self.cli_switch = compat.SwitchRow(title="Claude Code terminal command")
         self.cli_switch.set_active(profile.cli if profile else
                                    (any(p.cli for p in cfg.profiles) or not cfg.profiles))
         group.add(self.cli_switch)
@@ -439,18 +424,12 @@ class ProfileDialog:
         self.pw2.set_visible(on)
 
     def _pick_folder(self, _btn) -> None:
-        dialog = Gtk.FileDialog(title="Choose the profile data folder")
-
-        def done(d, result):
-            try:
-                folder = d.select_folder_finish(result)
-            except GLib.Error:
-                return
-            if folder and folder.get_path():
-                self.custom_dir = folder.get_path()
+        def done(path):
+            if path:
+                self.custom_dir = path
                 self._update_ids()
 
-        dialog.select_folder(self.win, None, done)
+        compat.select_folder(self.win, "Choose the profile data folder", done)
 
     def _toast(self, text: str) -> None:
         self.toasts.add_toast(Adw.Toast.new(text))
@@ -516,7 +495,7 @@ class SettingsDialog:
         self.hotkey = cfg.loader.hotkey
         self.win = _dialog_window(parent, "Loader settings", width=540, height=660)
 
-        view = Adw.ToolbarView()
+        view = compat.ToolbarView()
         header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _b: self.win.close())
@@ -546,31 +525,38 @@ class SettingsDialog:
         page.add(group)
 
         group = Adw.PreferencesGroup(title="Loader")
-        self.close_switch = Adw.SwitchRow(title="Close after starting a profile")
+        self.close_switch = compat.SwitchRow(title="Close after starting a profile")
         self.close_switch.set_active(cfg.loader.close_after_launch)
         group.add(self.close_switch)
-        self.update_switch = Adw.SwitchRow(title="Check for Claude Desktop updates on start")
+        self.update_switch = compat.SwitchRow(title="Check for Claude Desktop updates on start")
         self.update_switch.set_active(cfg.loader.check_updates)
         group.add(self.update_switch)
-        self.pw_switch = Adw.SwitchRow(title="Ask for a password when the loader opens")
+        # Kept as a percentage in the config, so an edited value survives the switch.
+        self._alert_percent = cfg.usage_alert_percent or 90
+        self.alert_switch = compat.SwitchRow(
+            title="Warn when a profile is nearly out of its limit",
+            subtitle=f"A notification at {self._alert_percent}% of the 5-hour window")
+        self.alert_switch.set_active(cfg.usage_alert_percent > 0)
+        group.add(self.alert_switch)
+        self.pw_switch = compat.SwitchRow(title="Ask for a password when the loader opens")
         self.pw_switch.set_active(bool(cfg.loader.password))
         self.pw_switch.connect("notify::active", lambda *_: self._update_pw_rows())
         group.add(self.pw_switch)
-        self.pw1 = Adw.PasswordEntryRow(title="New password" if not cfg.loader.password
+        self.pw1 = compat.PasswordEntryRow(title="New password" if not cfg.loader.password
                                         else "New password (empty keeps the current one)")
-        self.pw2 = Adw.PasswordEntryRow(title="Repeat password")
+        self.pw2 = compat.PasswordEntryRow(title="Repeat password")
         group.add(self.pw1)
         group.add(self.pw2)
         page.add(group)
 
         group = Adw.PreferencesGroup(title="When I sign in",
                                      description="Profiles with a password ask for it first.")
-        self.login_switch = Adw.SwitchRow(title="Open the loader")
+        self.login_switch = compat.SwitchRow(title="Open the loader")
         self.login_switch.set_active(cfg.loader.open_at_login)
         group.add(self.login_switch)
         self.autostart_switches = {}
         for p in cfg.profiles:
-            row = Adw.SwitchRow(title=f"Start {p.name}")
+            row = compat.SwitchRow(title=f"Start {p.name}")
             row.set_active(p.id in cfg.autostart_profiles)
             self.autostart_switches[p.id] = row
             group.add(row)
@@ -581,7 +567,7 @@ class SettingsDialog:
             description="\"Continue with Google\" returns to Claude through a claude:// link. "
                         "With routing on, the link goes to the profile that is running, or you "
                         "are asked which one should get it.")
-        self.url_switch = Adw.SwitchRow(title="Route claude:// links to the right profile")
+        self.url_switch = compat.SwitchRow(title="Route claude:// links to the right profile")
         self.url_switch.set_active(cfg.url_handler)
         group.add(self.url_switch)
         page.add(group)
@@ -655,6 +641,7 @@ class SettingsDialog:
         loader.hotkey = self.hotkey
         loader.close_after_launch = self.close_switch.get_active()
         loader.check_updates = self.update_switch.get_active()
+        self.cfg.usage_alert_percent = self._alert_percent if self.alert_switch.get_active() else 0
         loader.open_at_login = self.login_switch.get_active()
         self.cfg.autostart_profiles = [pid for pid, row in self.autostart_switches.items()
                                        if row.get_active()]
@@ -692,15 +679,38 @@ class ProfileCard(Gtk.Box):
             lock.set_halign(Gtk.Align.START)
             lock.set_valign(Gtk.Align.END)
             overlay.add_overlay(lock)
+        # Running is a badge on the icon, so the line below it can name the account.
+        self.running_badge = Gtk.Image.new_from_icon_name("media-record-symbolic")
+        self.running_badge.add_css_class("badge")
+        self.running_badge.add_css_class("running")
+        self.running_badge.set_halign(Gtk.Align.END)
+        self.running_badge.set_valign(Gtk.Align.END)
+        self.running_badge.set_visible(False)
+        self.running_badge.set_tooltip_text("Running")
+        overlay.add_overlay(self.running_badge)
         self.append(overlay)
 
         name = Gtk.Label(label=profile.name, ellipsize=Pango.EllipsizeMode.END,
                          max_width_chars=16)
         name.add_css_class("profile-name")
         self.append(name)
-        self.status = Gtk.Label(label="", ellipsize=Pango.EllipsizeMode.END, max_width_chars=18)
+        # The account this profile is signed in as, once it is known; until then
+        # the terminal command, which is the other thing worth knowing about it.
+        self.status = Gtk.Label(label=profile.cli_command if profile.cli else "",
+                                ellipsize=Pango.EllipsizeMode.END, max_width_chars=18)
         self.status.add_css_class("caption")
+        self.status.add_css_class("dim-label")
         self.append(self.status)
+
+        self.usage = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, visible=False)
+        self.usage_bar = Gtk.ProgressBar(valign=Gtk.Align.CENTER, width_request=64)
+        self.usage_bar.add_css_class("usage-bar")
+        self.usage.append(self.usage_bar)
+        self.usage_label = Gtk.Label(label="")
+        self.usage_label.add_css_class("caption")
+        self.usage_label.add_css_class("dim-label")
+        self.usage.append(self.usage_label)
+        self.append(self.usage)
 
         menu = Gio.Menu()
         for label, action in (("Start", "win.start-profile"), ("Edit…", "win.edit-profile"),
@@ -762,14 +772,31 @@ class ProfileCard(Gtk.Box):
             self.remove_css_class("selected")
 
     def set_running(self, running: bool) -> None:
-        if running:
-            self.status.set_label("● running")
-            self.status.remove_css_class("dim-label")
-            self.status.add_css_class("running-dot")
-        else:
-            self.status.set_label(self.profile.cli_command if self.profile.cli else "")
-            self.status.remove_css_class("running-dot")
-            self.status.add_css_class("dim-label")
+        self.running_badge.set_visible(running)
+
+    def set_usage(self, data) -> None:
+        """Show the account and how full its window is, once that is known."""
+        who = data.account_label if data else ""
+        if who:
+            self.status.set_label(who)
+            self.status.set_tooltip_text(who)
+        share = data.share if data else None
+        self.usage.set_visible(share is not None)
+        if share is None:
+            return
+        self.usage_bar.set_fraction(share)
+        for level in ("level-warn", "level-high"):
+            self.usage_bar.remove_css_class(level)
+        if share >= 0.9:
+            self.usage_bar.add_css_class("level-high")
+        elif share >= 0.75:
+            self.usage_bar.add_css_class("level-warn")
+        self.usage_label.set_label(usagemod.percent(share))
+        left = data.resets_in()
+        tip = f"{usagemod.percent(share)} of the 5-hour window"
+        if left is not None:
+            tip += f", resets in {usagemod.human_delta(left)}"
+        self.usage.set_tooltip_text(tip)
 
 
 class LoaderWindow(Adw.ApplicationWindow):
@@ -781,6 +808,8 @@ class LoaderWindow(Adw.ApplicationWindow):
         self.selection_mode = False
         self.selected: set = set()
         self.update_info = None
+        self.usage_data = {}
+        self.alerts = usagemod.Alerts(self.cfg.usage_alert_percent)
         self.locked = bool(self.cfg.loader.password)
 
         for name, handler in (("start-profile", self._act_start), ("edit-profile", self._act_edit),
@@ -792,13 +821,14 @@ class LoaderWindow(Adw.ApplicationWindow):
                               ("settings", lambda *_: self.open_settings()),
                               ("check-updates", lambda *_: self.check_updates(manual=True)),
                               ("paste-link", lambda *_: self.paste_link()),
+                              ("usage", lambda *_: self.open_usage()),
                               ("about", lambda *_: self.show_about())):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", handler)
             self.add_action(action)
 
         self.toasts = Adw.ToastOverlay()
-        self.view = Adw.ToolbarView()
+        self.view = compat.ToolbarView()
         self.toasts.set_child(self.view)
         self.set_content(self.toasts)
 
@@ -811,6 +841,7 @@ class LoaderWindow(Adw.ApplicationWindow):
         header.pack_start(self.select_btn)
         menu = Gio.Menu()
         menu.append("Add profile…", "win.add-profile")
+        menu.append("Token usage…", "win.usage")
         menu.append("Paste sign-in link…", "win.paste-link")
         menu.append("Check for updates", "win.check-updates")
         menu.append("Settings…", "win.settings")
@@ -820,7 +851,7 @@ class LoaderWindow(Adw.ApplicationWindow):
         header.pack_end(self.menu_btn)
         self.view.add_top_bar(header)
 
-        self.banner = Adw.Banner(revealed=False)
+        self.banner = compat.Banner(revealed=False)
         self.banner.connect("button-clicked", lambda _b: self.run_update())
         self.view.add_top_bar(self.banner)
 
@@ -912,6 +943,50 @@ class LoaderWindow(Adw.ApplicationWindow):
     def _after_unlock(self) -> None:
         if self.cfg.loader.check_updates:
             self.check_updates(manual=False)
+        self.refresh_usage()
+        GLib.timeout_add_seconds(USAGE_REFRESH_SECONDS, self._usage_timer)
+
+    # --- token usage on the cards -----------------------------------------------
+
+    def _usage_timer(self) -> bool:
+        self.refresh_usage()
+        return True
+
+    def refresh_usage(self) -> None:
+        """Ask each account how full its window is, without holding up the window."""
+        if self.locked or not self.cfg.profiles:
+            return
+        cfg = self.cfg
+
+        def work():
+            try:
+                collected = usagemod.collect_all(cfg)
+            except Exception:
+                collected = []
+            GLib.idle_add(self._usage_ready, collected)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _usage_ready(self, collected) -> bool:
+        self.usage_data = {d.profile_id: d for d in collected}
+        for pid, card in self.cards.items():
+            card.set_usage(self.usage_data.get(pid))
+        for data in collected:
+            message = self.alerts.due(data)
+            if message:
+                self.notify(data.name, message)
+        for label, names in usagemod.shared_accounts(collected).items():
+            self.toast(f"{' and '.join(names)} are signed in to the same account ({label}).")
+        return False
+
+    def notify(self, profile_name: str, body: str) -> None:
+        """A desktop notification; GNOME shows it under the loader's menu entry."""
+        app = self.get_application()
+        if app is None:
+            return
+        note = Gio.Notification.new(f"Claude ({profile_name})")
+        note.set_body(body)
+        app.send_notification(f"claude-usage-{profile_name}", note)
 
     # --- building ----------------------------------------------------------------
 
@@ -949,6 +1024,8 @@ class LoaderWindow(Adw.ApplicationWindow):
         self.lookup_action("add-profile").set_enabled(
             interactive and len(self.cfg.profiles) < cfgmod.MAX_PROFILES)
         self._refresh_running()
+        for pid, card in self.cards.items():
+            card.set_usage(self.usage_data.get(pid))
         self._update_selection_ui()
 
     def _refresh_running(self) -> bool:
@@ -1136,13 +1213,10 @@ class LoaderWindow(Adw.ApplicationWindow):
         SettingsDialog(self, self.cfg, saved)
 
     def show_about(self) -> None:
-        about = Adw.AboutWindow(transient_for=self, application_name="Claude Loader",
-                                application_icon="application-x-executable", version=VERSION,
-                                comments="Run several Claude accounts and agents side by side.\n"
-                                         "Unofficial, not affiliated with Anthropic.",
-                                website="https://github.com/nurxie/claude-loader",
-                                license_type=Gtk.License.MIT_X11)
-        about.present()
+        compat.about(self, name="Claude Loader", version=VERSION,
+                     comments="Run several Claude accounts and agents side by side.\n"
+                              "Unofficial, not affiliated with Anthropic.",
+                     website="https://github.com/nurxie/claude-loader")
 
     def toast(self, text: str) -> None:
         self.toasts.add_toast(Adw.Toast.new(text))
@@ -1152,6 +1226,12 @@ class LoaderWindow(Adw.ApplicationWindow):
             self.toast("Add a profile first.")
             return
         PasteLinkDialog(self, self.cfg, self.toast)
+
+    def open_usage(self) -> None:
+        if not self.cfg.profiles:
+            self.toast("Add a profile first.")
+            return
+        _PLAT.open_usage_window()
 
     # --- updates -------------------------------------------------------------------
 
@@ -1225,7 +1305,7 @@ class PasteLinkDialog:
     def __init__(self, parent, cfg, toast: Callable[[str], None]):
         self.parent, self.cfg, self.toast = parent, cfg, toast
         self.win = _dialog_window(parent, "Paste sign-in link", width=520)
-        view = Adw.ToolbarView()
+        view = compat.ToolbarView()
         header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _b: self.win.close())
@@ -1245,7 +1325,7 @@ class PasteLinkDialog:
             description="After \"Continue with Google\", the browser offers to open Claude. "
                         "Cancel that, copy the claude://… link (for example right-click the "
                         "page's open-app button › Copy link) and paste it here.")
-        self.link_row = Adw.EntryRow(title="claude:// link")
+        self.link_row = compat.EntryRow(title="claude:// link")
         self.link_row.connect("entry-activated", self._send)
         group.add(self.link_row)
         self.profile_row = Adw.ComboRow(title="Send to profile")

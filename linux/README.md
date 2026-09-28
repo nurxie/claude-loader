@@ -29,9 +29,11 @@ Claude Loader is one program with several jobs. Its command is
 
 ## Requirements
 
-- **Ubuntu 24.04 or newer with the default GNOME desktop.** The loader needs
-  GTK 4 and libadwaita 1.4+. Ubuntu 22.04 ships an older libadwaita, so the
-  loader won't run there.
+- **Ubuntu 22.04 or newer with the default GNOME desktop.** The loader needs
+  GTK 4 and libadwaita. Where libadwaita is older than 1.4 - Ubuntu 22.04
+  ships 1.1 - the loader builds the handful of newer widgets it wants out of
+  the ones that are there (see `compat.py`); `claude-profiles doctor` prints
+  which ones. Everything works either way, and looks a little plainer on 22.04.
 - An x86_64 or arm64 PC.
 - A normal user account with `sudo` rights (needed once, to install packages).
 
@@ -128,6 +130,20 @@ A green **● running** label shows which profiles are open. When a new Claude
 Desktop version is out, a banner with an **Update** button appears. Your system
 password is asked through the standard Ubuntu dialog.
 
+**Which account is which.** Each profile's card names the account it is signed
+in as - the e-mail and the organization - once it has been asked. That is the
+thing you cannot see from the outside: five profiles look alike until one of
+them turns out to be the wrong login. If two profiles end up in the same
+account, the loader says so.
+
+**At a glance.** Under the name, a thin bar shows how much of that profile's
+five-hour window is gone, amber from 75 % and red from 90 %, so you can see the
+state of every account without opening anything.
+
+**A warning before you run out.** At 90 % of a window you get one desktop
+notification per profile per window, with the time it resets. Turn it off in
+the loader's settings, or set `usage_alert_percent` to 0 in `config.json`.
+
 ### Terminal commands
 
 ```bash
@@ -192,6 +208,59 @@ If both fail, use e-mail + code.
 
 ---
 
+## Token usage
+
+Open it from the loader's `☰ › Token usage…`, from the app menu
+(**Claude Token Usage**) or with `claude-profiles usage`. It is a window of its
+own, meant to be left open next to your work; `claude-profiles usage --text`
+prints the same figures as a table.
+
+Each profile gets two bars:
+
+- **5-hour window** — how much of it is gone and **when it resets**, as a
+  countdown and a wall-clock time. Claude's allowance runs in five-hour windows
+  that open with your first message.
+- **Last 7 days** — the weekly limit where your plan has one, with the
+  busiest models named underneath.
+
+The bar turns amber at 75 % and red at 90 %, and it refreshes every minute.
+
+> **A profile signed in only in the Claude app has no figures yet.** The app's
+> Code tab keeps its session inside the app's own encrypted storage, so there is
+> no token for Claude Loader to read. The profile still shows *which* account it
+> is — Claude Code records that either way — but the percentages stay empty
+> until you sign that profile's terminal command in once:
+>
+> ```
+> claude-work          # then /login, once per profile
+> ```
+>
+> After that the account answers and the bars fill in. Signing in through the
+> terminal does not sign you out of the app; they share the profile's folder.
+
+**Where the numbers come from.** The percentages and the reset times are asked
+from each profile's own account, over HTTPS, with the sign-in that profile
+already keeps in its folder. That is the only place they exist: a plan's
+allowance is not written down anywhere on your PC, and neither is the moment a
+window resets.
+
+Alongside that, Claude Loader reads the Claude Code transcripts in the
+profile's config folder for the detail the account does not return — which
+models the tokens went to, and how many messages. That covers the **Claude Code
+CLI and the Desktop app's Code tab**, which share the folder; chat in the
+Desktop app is not recorded by Claude Code, so it is not counted there.
+
+If an account cannot be reached — the profile has never been started, the
+sign-in has expired, there is no network — the window says so in one
+sentence and falls back to the local count. The bar then fills against whatever
+you set under **Limits…**, or against the busiest window seen so far.
+
+Nothing is sent anywhere but Anthropic, and nothing read is stored, logged or
+shown. To turn the requests off entirely, set `"usage_online": false` in
+`config.json`, or pass `claude-profiles usage --local`.
+
+---
+
 ## Passwords
 
 Passwords are a **simple lock**. The loader and the menu entries ask for the
@@ -215,6 +284,7 @@ encryption.
 | `claude-profiles` and `claude-<id>`     | `~/.local/bin/`                                             |
 | Settings (profiles, password hashes)    | `~/.config/claude-profiles/config.json`                     |
 | Menu entries                            | `~/.local/share/applications/claude-profile-*.desktop`      |
+| Loader and usage window entries         | `~/.local/share/applications/io.github.claudeprofiles.*`    |
 | Colored icons                           | `~/.local/share/claude-profiles/icons/`                     |
 | Logs of started instances               | `~/.local/share/claude-profiles/logs/<id>.log`              |
 | Profile data (default)                  | `~/.local/share/claude-profiles/profiles/<id>/`             |
@@ -295,7 +365,11 @@ in several profiles at the same time hasn't been tested.
   recolor), CLI commands, launching, detecting running profiles, link routing
   and pasted links, the setup wizard, the manager and the uninstaller. The
   update check was run against Anthropic's real repository.
-- **Not yet tested:** the loader window and real Claude Desktop instances on a
-  GNOME desktop. Everything added in 0.3.0 — the two-to-four-key rule for the
-  GNOME hotkey, `usage`, `self-update` — was written and checked on Windows and
-  has not been run on Ubuntu yet.
+- Run on a real Ubuntu 22.04 GNOME (Wayland) desktop with Claude Desktop
+  installed: the loader window and every dialog it opens, the GNOME hotkey, the
+  menu entries, and the token usage window and loader cards against a real
+  signed-in account — percentages, reset times and the near-the-limit warning.
+- **Not yet tested:** several real Claude Desktop instances side by side, and
+  `claude://` link routing with a live sign-in.
+
+How it all fits together, for reading or changing the code: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).

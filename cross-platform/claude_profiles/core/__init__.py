@@ -6,7 +6,7 @@ Everything here works the same on Linux and Windows. OS-specific work
 the core through `core.platform.Platform`.
 """
 
-VERSION = "0.3.0"
+VERSION = "1.0.0"
 
 # Where `claude-profiles self-update` looks for new releases.
 REPO = "nurxie/claude-loader"

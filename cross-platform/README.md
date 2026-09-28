@@ -1,7 +1,9 @@
 # Cross-platform core
 
 This folder holds the part of Claude Loader (`claude-profiles`) that works the same on every
-operating system. The OS-specific parts live in [`../linux`](../linux) and
+operating system. For the full picture - what happens when you start a profile,
+where the token figures come from, what each system does differently - see
+[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md). The OS-specific parts live in [`../linux`](../linux) and
 [`../windows`](../windows). You don't run anything from here directly: each
 OS installer copies this core next to its own part.
 
@@ -35,8 +37,8 @@ The program runs as `python -m claude_profiles.linux` or
 | `paths.py`        | Where things live on each OS                                               |
 | `platform.py`     | The `Platform` interface each OS implements                                |
 | `selfupdate.py`   | Looking for and installing new Claude Loader releases                      |
-| `usage.py`        | Counting tokens per profile from the Claude Code transcripts               |
-| `usage_online.py` | Experimental: the exact remaining limits, asked from the account           |
+| `usage.py`        | What the interface shows per profile: the account's figures, and the local count behind them |
+| `usage_online.py` | The real limits and reset times, asked from each profile's own account     |
 
 ### Updating Claude Loader itself
 
@@ -53,22 +55,52 @@ The Python environment, the `claude-profiles` command and `config.json` are
 never touched, because a release does not change them. A release that does
 needs the repository installer to be run again.
 
-### Counting tokens
+### Where the token figures come from
 
-Claude Code writes one JSON line per message into
-`<config dir>/projects/<project>/<session>.jsonl`, and each assistant line
-carries that request's token counts and model. `usage.py` reads them,
-de-duplicates on `(message id, request id)` because a resumed session is
-written to more than one file, and groups them into the five-hour windows
-Claude's limits use: a window opens with the first message, is stamped to the
-full hour and lasts five hours, and a five-hour gap also ends one.
+The percentages and the reset times come from the account, not from this
+machine: `usage_online.py` reads the OAuth token Claude Code leaves in the
+profile's own folder (`.credentials.json`) when you sign in to the CLI, and asks
+the same endpoint the CLI's `/usage` uses. A profile signed in only through the
+Desktop app has no such file - that session lives inside the app's own encrypted
+storage - so its figures stay local until `claude-<id>` is signed in once.
+`local_account()` covers the gap for identity: Claude Code records the account
+in `.claude.json` either way, so every profile can still say who it is. Nothing local can know either figure - a plan's allowance is not
+written down anywhere, and neither is the moment a five-hour window resets.
+Answers are cached for `CACHE_SECONDS` because the usage window asks on a timer.
 
-It therefore covers the Claude Code CLI and the Desktop app's Code tab, which
-share a profile's config folder, but not Desktop chat, which Claude Code does
-not record. The plan's real allowance is not stored on the machine either, so
-the progress bars run against `usage_limit` / `usage_weekly_limit` per profile,
-or — when those are 0 — against the busiest window seen so far, which the
-interface says plainly.
+`usage.py` supplies what that answer does not carry. Claude Code writes one
+JSON line per message into `<config dir>/projects/<project>/<session>.jsonl`,
+and each assistant line carries that request's token counts and model.
+`usage.py` reads them, de-duplicates on `(message id, request id)` because a
+resumed session is written to more than one file, and groups them into
+five-hour windows the way Claude's limits work: a window opens with the first
+message, is stamped to the full hour and lasts five hours, and a five-hour gap
+also ends one.
+
+So a profile's row is the account's percentage and reset time, with the local
+count naming the models behind it. When the account cannot be reached - the
+profile was never started, the sign-in expired, no network - `ProfileUsage`
+falls back to the local estimate against `usage_limit` / `usage_weekly_limit`,
+or the busiest window seen so far, and `account_note` says in one sentence why.
+
+The local count covers the Claude Code CLI and the Desktop app's Code tab,
+which share a profile's config folder, but not Desktop chat, which Claude Code
+does not record.
+
+The same answer says **who** a profile is signed in as: `usage_online.identity`
+reads the profile endpoint and returns an `Account` (e-mail, organization,
+plan). The loader puts it under each profile's name, which is how you tell five
+profiles apart, and `duplicates()` spots two profiles that ended up in the same
+account.
+
+`usage.Alerts` holds the rule for warning when a window is nearly full, so both
+systems share it and only have to know how to raise a notification: it answers
+once per window, and the reset time is what tells one window from the next. On
+Linux the loader and the usage window raise it; on Windows the tray agent does,
+because it is the process that outlives them.
+
+Set `usage_online` to false to stop asking the account at all, and
+`usage_alert_percent` to 0 to stop the warnings.
 
 ## How a profile is isolated
 
@@ -138,16 +170,39 @@ It's stored in `~/.config/claude-profiles/` on Linux and in
   "window_class": true,           // Linux: --class so each profile gets its own dock icon
   "desktop_shortcuts": true,      // Windows: Desktop shortcuts for the profiles
   "path_added": false,            // Windows: bin folder added to the user PATH
-  "usage_online": false,          // experimental: ask the account for exact limits
-  "usage_url": "",                // where that request goes, if it ever moves
-  "version": 1
+  "usage_online": true,           // ask the account for the real limits and reset times
+  "usage_url": "",                // where the limits request goes, if it ever moves
+  "profile_url": "",              // where the "who is this" request goes
+  "usage_alert_percent": 90,      // warn at this much of a 5-hour window; 0 = never
+  "version": 2
 }
 ```
 
-Unknown keys are ignored, so older versions can read newer files.
+Unknown keys are ignored, so older versions can read newer files. `version` is
+what `config._migrate` reads: a file written before version 2 has its
+`usage_online` turned on, because the key changed meaning (it used to switch on
+an experimental extra; it is now how the figures are obtained at all).
+
+## Tests
+
+`tests/` covers the parts that are pure functions - the PNG and ICO codecs, the
+window grouping and de-duplication, the shapes the account's answer comes in,
+the config rules and migration, the password lock, the shortcut formats of both
+systems and what a release archive is allowed to unpack. No network, no
+windows, no Claude:
+
+```bash
+python3 -m unittest discover -s tests -t tests
+```
+
+`tests/context.py` puts `cross-platform/`, `linux/` and `windows/` on the path,
+which is all a namespace package needs, so the suite runs against the working
+tree on any system. GitHub Actions runs it on 3.10 and 3.12.
 
 ## Adding another OS
 
 Write `<os>/claude_profiles/<os>/` with a `Platform` subclass, a `gui` module
 and a `__main__.py` that calls `core.cli.main(YourPlatform())`, plus an
-installer that copies `core` next to it.
+installer that copies `core` next to it. A `usage_window` module and
+`has_usage_window = True` add the token window; without them `claude-profiles
+usage` still prints the table.

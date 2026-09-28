@@ -1,28 +1,34 @@
-"""How many tokens each profile has spent, and when its window resets.
+"""How much of each profile's limit is gone, and when it resets.
 
-Claude Code writes one JSON line per message into
-`<config dir>/projects/<project>/<session>.jsonl`, and every assistant line
-carries the token counts of that request. Reading those files gives a complete
-picture of a profile's Claude Code use (the CLI and the Desktop app's Code tab,
-which share the folder) without a network call or any credentials.
+`collect_profile` puts together what the interface shows, from two sources:
 
-Two things this cannot know, because they are not in the files:
+* the profile's **account**, through `usage_online` - how full the five-hour
+  window is and the moment it resets. Nothing on this machine knows either: a
+  plan's allowance is not written down anywhere, and neither is the reset time.
+  So when the account answers, it wins.
+* the **transcripts on this PC** for what the account does not return. Claude
+  Code writes one JSON line per message into
+  `<config dir>/projects/<project>/<session>.jsonl`, and every assistant line
+  carries that request's token counts and model. That says which models the
+  tokens went to and how many messages there were, and it is also the estimate
+  to fall back on when the account cannot be reached - against a limit set per
+  profile, or the busiest window seen so far.
 
-* the plan's real allowance - the progress bars therefore run against a limit
-  you set per profile, or against the busiest window seen so far;
-* anything you typed in the Desktop app's chat, which Claude Code never logs.
-
-`usage_online` is the experimental counterpart that asks Claude for the exact
-remaining limits instead.
+The local half covers the Claude Code CLI and the Desktop app's Code tab, which
+share a profile's config folder. It does not cover Desktop chat, which Claude
+Code never logs.
 """
 
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional
 
 from . import paths
+
+if TYPE_CHECKING:  # usage_online imports this module, so only for the annotations
+    from .usage_online import Account, Limits
 
 BLOCK_HOURS = 5                     # Claude's rolling usage window
 WEEK_DAYS = 7
@@ -109,22 +115,77 @@ class ProfileUsage:
     first_seen: Optional[datetime] = None
     source: str = "local"
     note: str = ""
+    # What the account itself reports. When it is here it wins: it is the only
+    # source that knows the plan's allowance and the exact reset time. The local
+    # count stays for the per-model detail.
+    account: Optional["Limits"] = None
+    account_note: str = ""
+    # Who the profile is signed in as, so several profiles can be told apart.
+    identity: Optional["Account"] = None
 
     @property
     def used(self) -> int:
         return self.active.totals.total if self.active else 0
 
     @property
+    def account_label(self) -> str:
+        """The account this profile is signed in as, in one line. '' if unknown."""
+        return self.identity.label if self.identity else ""
+
+    @property
+    def account_window(self):
+        return self.account.five_hour if self.account else None
+
+    @property
     def share(self) -> Optional[float]:
-        """0.0-1.0 of the window's limit, or None when no limit is known."""
-        return min(1.0, self.used / self.limit) if self.limit > 0 else None
+        """0.0-1.0 of the window's allowance, or None when nothing knows it.
+
+        A limit you set is not a figure on its own: with nothing recorded here,
+        the local estimate would read 0% of a window that may be half gone. So
+        it only counts when there is something to count.
+        """
+        window = self.account_window
+        if window is not None:
+            return window.share
+        if self.active is None or self.limit <= 0:
+            return None
+        return min(1.0, self.used / self.limit)
 
     @property
     def weekly_share(self) -> Optional[float]:
-        return min(1.0, self.week.total / self.weekly_limit) if self.weekly_limit > 0 else None
+        window = self.account.seven_day if self.account else None
+        if window is not None:
+            return window.share
+        if not self.week.total or self.weekly_limit <= 0:
+            return None
+        return min(1.0, self.week.total / self.weekly_limit)
+
+    @property
+    def opus_weekly_share(self) -> Optional[float]:
+        window = self.account.seven_day_opus if self.account else None
+        return window.share if window is not None else None
+
+    @property
+    def has_window(self) -> bool:
+        """Is there an open five-hour window at all?"""
+        return self.account_window is not None or self.active is not None
+
+    @property
+    def resets_at(self) -> Optional[datetime]:
+        window = self.account_window
+        if window is not None and window.resets_at is not None:
+            return window.resets_at
+        return self.active.end if self.active else None
 
     def resets_in(self, now: Optional[datetime] = None) -> Optional[timedelta]:
-        return self.active.resets_in(now) if self.active else None
+        at = self.resets_at
+        if at is None:
+            return None
+        return max(timedelta(0), at - (now or _now()))
+
+    def weekly_resets_in(self, now: Optional[datetime] = None) -> Optional[timedelta]:
+        window = self.account.seven_day if self.account else None
+        return window.resets_in(now) if window is not None else None
 
 
 # --- reading the transcripts -------------------------------------------------------
@@ -249,7 +310,7 @@ def collect(profile, now: Optional[datetime] = None, history_days: int = 30) -> 
 
     entries = read_entries(profile, since=now - timedelta(days=history_days))
     if not entries:
-        usage.note = "No Claude Code activity recorded for this profile yet."
+        usage.note = "No Claude Code history on this PC yet."
         return usage
     usage.first_seen = entries[0].at
 
@@ -271,9 +332,26 @@ def collect(profile, now: Optional[datetime] = None, history_days: int = 30) -> 
     return usage
 
 
-def collect_all(cfg, now: Optional[datetime] = None) -> List[ProfileUsage]:
+def collect_profile(profile, cfg=None, now: Optional[datetime] = None,
+                    online: Optional[bool] = None, force: bool = False) -> ProfileUsage:
+    """One profile, with the account's figures on top of the local count.
+
+    `online` defaults to the config's setting. Asking the account is what makes
+    the percentages and the reset time real; if it cannot be reached, what is
+    left is the local estimate and a sentence saying why.
+    """
+    data = collect(profile, now)
+    ask = online if online is not None else bool(getattr(cfg, "usage_online", False))
+    if ask:
+        from . import usage_online  # imported here: it imports this module
+        usage_online.apply_to(data, profile, cfg, force)
+    return data
+
+
+def collect_all(cfg, now: Optional[datetime] = None, online: Optional[bool] = None,
+                force: bool = False) -> List[ProfileUsage]:
     now = now or _now()
-    return [collect(p, now) for p in cfg.profiles]
+    return [collect_profile(p, cfg, now, online, force) for p in cfg.profiles]
 
 
 # --- formatting ------------------------------------------------------------------------
@@ -313,32 +391,109 @@ def human_delta(delta: Optional[timedelta]) -> str:
     return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
 
 
-def text_report(cfg, online: bool = False) -> List[str]:
+def percent(share: Optional[float]) -> str:
+    return f"{int(round(share * 100))}%" if share is not None else "-"
+
+
+def window_summary(data: ProfileUsage, now: Optional[datetime] = None) -> str:
+    """The five-hour window in one line: how full, and when it empties."""
+    if not data.has_window:
+        return "no open window"
+    parts = []
+    if data.share is not None:
+        used = f"{percent(data.share)} used"
+        if data.source != "account" and data.limit > 0:
+            used += f" ({human_tokens(data.used)} of {human_tokens(data.limit)} counted here)"
+        parts.append(used)
+    elif data.used:
+        parts.append(f"{human_tokens(data.used)} counted here")
+    resets_in = data.resets_in(now)
+    if resets_in is not None and data.resets_at is not None:
+        parts.append(f"resets in {human_delta(resets_in)} "
+                     f"({data.resets_at.astimezone().strftime('%H:%M')})")
+    return ", ".join(parts) or "no figures yet"
+
+
+def week_summary(data: ProfileUsage) -> str:
+    if data.weekly_share is not None:
+        text = f"{percent(data.weekly_share)} used"
+        resets_in = data.weekly_resets_in()
+        if resets_in is not None:
+            text += f", resets in {human_delta(resets_in)}"
+        return text
+    if data.source == "account":
+        return "no weekly limit on this plan"
+    if data.weekly_limit > 0:
+        return (f"{human_tokens(data.week.total)} of {human_tokens(data.weekly_limit)} "
+                "counted here")
+    return f"{human_tokens(data.week.total)} counted here"
+
+
+class Alerts:
+    """Says once per window when a profile is close to its limit.
+
+    Both interfaces ask the same object, so the rule for *when* to warn lives in
+    one place and each system only has to know how to show a notification. The
+    reset time is what tells one window from the next, so a fresh window warns
+    again and a re-read of the same one does not.
+    """
+
+    def __init__(self, percent: int = 90):
+        self.percent = percent
+        self._said: Dict[str, str] = {}      # profile id -> the window it was said for
+
+    def due(self, data: ProfileUsage) -> Optional[str]:
+        """The sentence to show, or None when there is nothing to say."""
+        share = data.share
+        if self.percent <= 0 or share is None or share * 100 < self.percent:
+            return None
+        at = data.resets_at
+        window = at.isoformat() if at else "window"
+        if self._said.get(data.profile_id) == window:
+            return None
+        self._said[data.profile_id] = window
+        left = data.resets_in()
+        if left is not None and at is not None:
+            return (f"{percent(share)} of the 5-hour window is gone. "
+                    f"It resets in {human_delta(left)} "
+                    f"({at.astimezone().strftime('%H:%M')}).")
+        return f"{percent(share)} of the 5-hour window is gone."
+
+    def forget(self, profile_id: str) -> None:
+        self._said.pop(profile_id, None)
+
+
+def text_report(cfg, online: Optional[bool] = None, force: bool = False) -> List[str]:
     """The same figures as the usage window, for `claude-profiles usage`."""
     lines = []
-    for profile in cfg.profiles:
-        data = collect(profile)
-        if online:
-            from . import usage_online  # only needed for the experimental path
-            usage_online.apply_to(data, profile, cfg)
-        head = f"{profile.name} ({profile.id})"
-        if not data.active:
-            lines.append(f"{head}: no open window. {data.note}".rstrip())
-        else:
-            limit = f" of {human_tokens(data.limit)}" if data.limit > 0 else ""
-            share = f" [{int((data.share or 0) * 100)}%]" if data.limit > 0 else ""
-            lines.append(f"{head}: {human_tokens(data.used)}{limit}{share} in the 5-hour window, "
-                         f"resets in {human_delta(data.resets_in())} "
-                         f"({data.active.end.astimezone().strftime('%H:%M')})")
-        weekly = f" of {human_tokens(data.weekly_limit)}" if data.weekly_limit > 0 else ""
-        lines.append(f"    last 7 days: {human_tokens(data.week.total)}{weekly} "
-                     f"in {data.week.messages} messages")
+    collected = collect_all(cfg, online=online, force=force)
+    for data in collected:
+        source = "from your account" if data.source == "account" else "counted on this PC"
+        who = data.account_label
+        lines.append(f"{data.name} ({data.profile_id})  -  "
+                     + (f"{who}, {source}" if who else source))
+        lines.append(f"    5-hour window: {window_summary(data)}")
+        lines.append(f"    last 7 days:   {week_summary(data)}")
+        if data.opus_weekly_share is not None:
+            lines.append(f"    ... of it Opus: {percent(data.opus_weekly_share)}")
         models = ", ".join(f"{short_model(m)} {human_tokens(v)}" for m, v in data.week.top_models())
         if models:
-            lines.append(f"    by model:    {models}")
-        if data.limit_is_measured:
-            lines.append("    (the limit is the busiest window so far, not your plan's)")
+            lines.append(f"    by model:      {models} "
+                         f"({data.week.messages} messages on this PC)")
+        for note in (data.account_note, data.note):
+            if note:
+                lines.append(f"    {note}")
+        if data.source != "account" and data.limit_is_measured:
+            lines.append("    (the limit shown is the busiest window so far, not your plan's)")
+    for label, names in shared_accounts(collected).items():
+        lines.append(f"! {' and '.join(names)} are signed in to the same account ({label}).")
     return lines or ["No profiles yet."]
+
+
+def shared_accounts(collected: List[ProfileUsage]) -> Dict[str, List[str]]:
+    """Accounts that more than one profile is signed into: {account: [profile names]}."""
+    from . import usage_online
+    return usage_online.duplicates(collected)
 
 
 def short_model(name: str) -> str:

@@ -40,7 +40,8 @@ def cmd_doctor(plat) -> int:
 def cmd_usage(plat, cfg, args) -> int:
     if not args.text and plat.has_usage_window:
         return plat.run_usage_window(cfg)
-    for line in usage.text_report(cfg, online=args.online or cfg.usage_online):
+    online = False if args.local else (True if args.online else None)
+    for line in usage.text_report(cfg, online=online, force=True):
         print(line)
     return 0
 
@@ -73,7 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--text", action="store_true",
                    help="print a table instead of opening the window")
     p.add_argument("--online", action="store_true",
-                   help="ask Claude for the exact limits (experimental)")
+                   help="ask your account for the real limits, whatever the setting says")
+    p.add_argument("--local", action="store_true",
+                   help="only count the transcripts on this PC, do not ask the account")
     p = sub.add_parser("self-update", help="update Claude Loader itself from GitHub")
     p.add_argument("--check", action="store_true", help="only look, do not install")
     sub.add_parser("doctor", help="show what was detected on this system")

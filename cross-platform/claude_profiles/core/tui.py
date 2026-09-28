@@ -539,7 +539,7 @@ def check_updates_menu(plat, cfg) -> None:
 def usage_menu(cfg) -> None:
     from . import usage as usagemod
     header("Token usage")
-    for line in usagemod.text_report(cfg, online=cfg.usage_online):
+    for line in usagemod.text_report(cfg):
         print(line)
 
 

@@ -1,9 +1,10 @@
 """The token usage window: one set of bars per profile.
 
 A separate window rather than part of the loader, because it is something you
-leave open while you work. It reads the profiles' Claude Code transcripts (see
-`core.usage`), so it costs nothing and works offline. Reading can take a moment
-with a lot of history, so it happens on a background thread.
+leave open while you work. The figures come from each profile's account (see
+`core.usage_online`); the transcripts on this PC add the per-model detail and
+stand in when an account cannot be reached. Both can take a moment, so the
+reading happens on a background thread.
 """
 
 import queue
@@ -15,7 +16,7 @@ from typing import Dict, Optional
 
 from ..core import config as cfgmod
 from ..core import usage as usagemod
-from ..core import usage_online
+
 from . import gui, integration, winutil
 
 TITLE = integration.USAGE_TITLE
@@ -23,36 +24,6 @@ USAGE_MUTEX = "ClaudeProfilesUsage"
 
 REFRESH_MS = 60_000      # re-read the transcripts
 TICK_MS = 20_000         # move the countdowns along
-
-
-def _level_color(share: Optional[float]) -> str:
-    theme = gui._theme
-    if share is None:
-        return theme.sub
-    if share >= 0.9:
-        return "#c42b1c" if theme.light else "#ff99a4"
-    if share >= 0.75:
-        return "#9a6700" if theme.light else "#e3b341"
-    return theme.success
-
-
-class Bar(tk.Canvas):
-    """A flat progress bar that colours itself as it fills up."""
-
-    def __init__(self, parent, width: int, height: int = 9):
-        theme = gui._theme
-        super().__init__(parent, width=width, height=height, highlightthickness=0,
-                         bg=theme.bg, bd=0)
-        self._width, self._height = width, height
-
-    def set(self, share: Optional[float]) -> None:
-        theme = gui._theme
-        self.delete("all")
-        self.create_rectangle(0, 0, self._width, self._height, fill=theme.border, outline="")
-        if share and share > 0:
-            filled = max(3, int(self._width * min(1.0, share)))
-            self.create_rectangle(0, 0, filled, self._height, fill=_level_color(share),
-                                  outline="")
 
 
 class ProfileRow(ttk.Frame):
@@ -80,7 +51,7 @@ class ProfileRow(ttk.Frame):
                 row=row, column=0, columnspan=1, sticky="w", pady=(8, 0))
             holder = ttk.Frame(self)
             holder.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(8, 0))
-            bar = Bar(holder, bar_width)
+            bar = gui.Bar(holder, bar_width)
             bar.pack(side="left", pady=(4, 0))
             value = ttk.Label(holder, text="-", style="Sub.TLabel")
             value.pack(side="left", padx=(10, 0))
@@ -96,20 +67,14 @@ class ProfileRow(ttk.Frame):
         human = usagemod.human_tokens
         models = ", ".join(f"{usagemod.short_model(m)} {human(v)}"
                            for m, v in data.week.top_models(3))
-        self.summary.configure(text=models or "no activity in the last 7 days")
+        parts = [p for p in (data.account_label, models) if p]
+        self.summary.configure(text=" · ".join(parts) or "no activity in the last 7 days")
 
         window = self.bars["window"]
         window["bar"].set(data.share)
-        if data.active:
-            resets = usagemod.human_delta(data.resets_in())
-            clock = data.active.end.astimezone().strftime("%H:%M")
-            used = human(data.used)
-            if data.limit > 0:
-                percent = int((data.share or 0) * 100)
-                text = f"{used} / {human(data.limit)}  ·  {percent}%  ·  resets in {resets} ({clock})"
-            else:
-                text = f"{used} used  ·  resets in {resets} ({clock})"
-            window["value"].configure(text=text, foreground=_level_color(data.share))
+        if data.has_window:
+            window["value"].configure(text=usagemod.window_summary(data),
+                                      foreground=gui.level_color(data.share))
         else:
             window["bar"].set(None)
             window["value"].configure(text="idle - the next message opens a new window",
@@ -117,22 +82,22 @@ class ProfileRow(ttk.Frame):
 
         week = self.bars["week"]
         week["bar"].set(data.weekly_share)
-        weekly = f"{human(data.week.total)} in {data.week.messages} messages"
-        if data.weekly_limit > 0:
-            weekly = (f"{human(data.week.total)} / {human(data.weekly_limit)}  ·  "
-                      f"{int((data.weekly_share or 0) * 100)}%")
-        week["value"].configure(text=weekly, foreground=_level_color(data.weekly_share))
+        week["value"].configure(text=usagemod.week_summary(data),
+                                foreground=gui.level_color(data.weekly_share))
 
         notes = []
-        if data.limit > 0 and data.limit_is_measured:
+        if data.source == "account":
+            notes.append("Percentages and reset times come from your account.")
+            if data.opus_weekly_share is not None:
+                notes.append(f"Opus over 7 days: {usagemod.percent(data.opus_weekly_share)}.")
+        elif data.limit > 0 and data.limit_is_measured:
             notes.append(f"The limit shown is the busiest window so far ({human(data.limit)}); "
                          "set your plan's real figure under Limits.")
         elif data.limit <= 0:
             notes.append("No limit known yet, so only the amount used is shown.")
-        if data.source == "account":
-            notes.append("Figures come from your account.")
-        if data.note:
-            notes.append(data.note)
+        for note in (data.account_note, data.note):
+            if note:
+                notes.append(note)
         self.note.configure(text=" ".join(notes))
 
 
@@ -271,15 +236,10 @@ class UsageWindow:
             collected = {}
             for profile in cfg.profiles:
                 try:
-                    data = usagemod.collect(profile)
+                    data = usagemod.collect_profile(profile, cfg, force=True)
                 except Exception as e:  # a broken transcript must not stop the rest
                     data = usagemod.ProfileUsage(profile_id=profile.id, name=profile.name,
                                                  note=f"Could not read the history: {e}")
-                if cfg.usage_online:
-                    try:
-                        usage_online.apply_to(data, profile, cfg)
-                    except Exception:
-                        pass
                 collected[profile.id] = data
             return collected
 
