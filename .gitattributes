@@ -1,0 +1,9 @@
+# Windows scripts: CRLF (Windows PowerShell 5.1 and cmd expect it)
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Linux scripts and code: LF (bash fails on CRLF)
+*.sh  text eol=lf
+*.py  text eol=lf
+
+*.md  text eol=lf

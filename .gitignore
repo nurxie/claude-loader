@@ -1,0 +1,10 @@
+# Handoff notes from the previous Claude session (local only)
+HANDOFF.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Windows
+Thumbs.db
+desktop.ini
