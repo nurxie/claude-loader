@@ -79,16 +79,28 @@ class Platform:
     def valid_hotkey(self, accel: str) -> bool:
         raise NotImplementedError
 
+    def hotkey_problem(self, accel: Optional[str]) -> Optional[str]:
+        """Why this shortcut cannot be used, in one sentence. None means it is fine."""
+        return None if accel and self.valid_hotkey(accel) else "Not a usable shortcut."
+
     def hotkey_label(self, accel: Optional[str]) -> str:
         return accel or "none"
 
     def hotkey_conflicts(self, accel: str) -> List[str]:
         return []
 
+    # --- Claude Loader's own updates ---------------------------------------------------
+
+    def after_self_update(self, cfg) -> None:
+        """Refresh the generated files with the new code, in a fresh process."""
+
     # --- setup / uninstall hooks -----------------------------------------------------------
 
     def setup_questions(self, cfg, ui) -> None:
         """OS-specific questions asked by the setup wizard before saving."""
+
+    def loader_questions(self, loader, ui) -> None:
+        """OS-specific loader settings, asked by both the wizard and the manager."""
 
     def legacy_profiles(self) -> List[dict]:
         """Existing profile folders worth adopting: [{'name', 'desktop_dir', 'note'}]."""
@@ -122,6 +134,12 @@ class Platform:
     def open_loader(self) -> None:
         """Start the loader as a separate process (used at sign-in)."""
         raise NotImplementedError
+
+    # Windows has a window with the token bars; elsewhere `usage` prints a table.
+    has_usage_window = False
+
+    def run_usage_window(self, cfg) -> int:
+        raise NotImplementedError("There is no usage window on this system yet.")
 
     def after_autostart(self, cfg) -> int:
         """Last step of `claude-profiles autostart`. Returns the exit code."""

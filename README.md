@@ -7,10 +7,16 @@ same time, without signing out and back in.
 
 - **Loader:** press `Win+Shift+C` / `Super+Shift+C`, click a profile and it
   starts. Hold the mouse button to pick several and start them as a group.
+  The hotkey is yours to change, from two to four keys.
 - **Launcher:** colored shortcuts, a tray menu, autostart at sign-in and a
   `claude-<name>` command per profile.
-- **Manager:** add, recolor, lock or remove profiles, keep the Claude copy up
-  to date, and uninstall cleanly.
+- **Token usage:** a window with a bar per profile — how much of the 5-hour
+  window is gone, when it resets, and where the week went, by model.
+  *(Windows for now.)*
+- **Manager:** add, recolor, lock or remove profiles, recreate shortcuts you
+  deleted by accident, keep the Claude copy up to date, and uninstall cleanly.
+  Claude Loader also tells you when a new version of itself is out and installs
+  it when you say so.
 
 Every profile is fully isolated: its own Desktop data (`--user-data-dir`) and
 its own Claude Code config (`CLAUDE_CONFIG_DIR`). The Desktop app's Code tab
@@ -18,8 +24,8 @@ and the CLI share one login per profile and never mix with the others.
 
 | Version | For | What you get |
 | --- | --- | --- |
-| [**Windows**](windows/README.md) | Windows 10/11 | Up to 5 profiles, a hotkey loader, a tray menu, colored icons, optional passwords, `claude-<name>` CLI commands |
-| [**Linux**](linux/README.md) | Ubuntu 24.04+ (GNOME) | The same feature set with a native GTK loader and GNOME hotkey |
+| [**Windows**](windows/README.md) | Windows 10/11 | Up to 5 profiles, a hotkey loader, a tray menu, colored icons, optional passwords, `claude-<name>` CLI commands, the token usage window |
+| [**Linux**](linux/README.md) | Ubuntu 24.04+ (GNOME) | The same, with a native GTK loader and GNOME hotkey; token usage as a terminal table for now |
 | [**Windows legacy**](windows/legacy/README.md) | Windows 10/11 | Just two Desktop shortcuts (TEAM / Personal), no installation |
 
 > **Unofficial.** This project is not affiliated with or endorsed by Anthropic.
@@ -52,6 +58,9 @@ folder with `cross-platform/`. After setup you get:
 - `claude-profiles` to manage everything later, and
   `claude-profiles uninstall` to remove it.
 
+Later versions install themselves: the loader says when a new release is out
+and updates on one click, or run `claude-profiles self-update`.
+
 The command, the Python package and the data folders keep the project's
 original name, `claude-profiles`.
 
@@ -66,7 +75,9 @@ independent instance that can run next to the others.
 
 Each profile also gets its own `CLAUDE_CONFIG_DIR`, so the Desktop app's Code
 tab and the profile's `claude-<name>` command share one Claude Code config
-that no other profile touches.
+that no other profile touches. That folder is also where the token counts come
+from: Claude Code records what every message cost, so the usage window adds it
+up without asking anyone anything.
 
 One profile may keep using Claude's **standard folders**, which keeps the login
 you already have.

@@ -24,16 +24,51 @@ The installers merge them into one tree:
 The program runs as `python -m claude_profiles.linux` or
 `python -m claude_profiles.windows`.
 
-| Module        | What it does                                                               |
-| ------------- | -------------------------------------------------------------------------- |
-| `config.py`   | Profile and loader settings, validation, load/save of `config.json`        |
-| `security.py` | Password lock: salted PBKDF2-SHA256 hashes (a lock, not encryption)        |
-| `icons.py`    | Pure-Python PNG/ICO reader and writer, resize, recolor to the profile color |
-| `launch.py`   | Starting profiles, the CLI, password checks, `claude://` link routing      |
-| `tui.py`      | Terminal setup wizard, manager and uninstaller                             |
-| `cli.py`      | The `claude-profiles` command line                                         |
-| `paths.py`    | Where things live on each OS                                               |
-| `platform.py` | The `Platform` interface each OS implements                                |
+| Module            | What it does                                                               |
+| ----------------- | -------------------------------------------------------------------------- |
+| `config.py`       | Profile and loader settings, validation, load/save of `config.json`        |
+| `security.py`     | Password lock: salted PBKDF2-SHA256 hashes (a lock, not encryption)        |
+| `icons.py`        | Pure-Python PNG/ICO reader and writer, resize, recolor to the profile color |
+| `launch.py`       | Starting profiles, the CLI, password checks, `claude://` link routing      |
+| `tui.py`          | Terminal setup wizard, manager and uninstaller                             |
+| `cli.py`          | The `claude-profiles` command line                                         |
+| `paths.py`        | Where things live on each OS                                               |
+| `platform.py`     | The `Platform` interface each OS implements                                |
+| `selfupdate.py`   | Looking for and installing new Claude Loader releases                      |
+| `usage.py`        | Counting tokens per profile from the Claude Code transcripts               |
+| `usage_online.py` | Experimental: the exact remaining limits, asked from the account           |
+
+### Updating Claude Loader itself
+
+`selfupdate.check()` asks the GitHub API for the newest release (falling back
+to the newest tag) and caches the answer in `<data>/update.json` for a day.
+`selfupdate.install(url)` downloads the source archive and unpacks **only** the
+Python files of `cross-platform/claude_profiles/core` and
+`<os>/claude_profiles/<os>` into a staging folder beside the installed one,
+then swaps the directories, keeping the old package until the swap has worked.
+`Platform.after_self_update()` then runs `apply --quiet` in a fresh process so
+the new code writes the shortcuts.
+
+The Python environment, the `claude-profiles` command and `config.json` are
+never touched, because a release does not change them. A release that does
+needs the repository installer to be run again.
+
+### Counting tokens
+
+Claude Code writes one JSON line per message into
+`<config dir>/projects/<project>/<session>.jsonl`, and each assistant line
+carries that request's token counts and model. `usage.py` reads them,
+de-duplicates on `(message id, request id)` because a resumed session is
+written to more than one file, and groups them into the five-hour windows
+Claude's limits use: a window opens with the first message, is stamped to the
+full hour and lasts five hours, and a five-hour gap also ends one.
+
+It therefore covers the Claude Code CLI and the Desktop app's Code tab, which
+share a profile's config folder, but not Desktop chat, which Claude Code does
+not record. The plan's real allowance is not stored on the machine either, so
+the progress bars run against `usage_limit` / `usage_weekly_limit` per profile,
+or — when those are 0 — against the busiest window seen so far, which the
+interface says plainly.
 
 ## How a profile is isolated
 
@@ -79,17 +114,21 @@ It's stored in `~/.config/claude-profiles/` on Linux and in
       "system_default": false,    // true = standard Claude folders
       "password": null,           // or {"algo": "pbkdf2-sha256", "iterations", "salt", "hash"}
       "cli": true,
-      "desktop_dir": ""           // optional explicit Desktop data folder (adopted profiles)
+      "desktop_dir": "",          // optional explicit Desktop data folder (adopted profiles)
+      "usage_limit": 0,           // tokens per 5-hour window; 0 = learn it from history
+      "usage_weekly_limit": 0     // tokens per rolling 7 days; 0 = no bar
     }
   ],
   "loader": {
     "enabled": true,
     "hotkey": "<Super><Shift>c",  // GNOME format on Linux, "Win+Shift+C" on Windows
     "password": null,
-    "check_updates": true,
+    "check_updates": true,        // look for Claude Desktop updates
+    "check_app_updates": true,    // look for new Claude Loader releases
     "close_after_launch": true,
     "tray": true,                 // Windows tray agent
     "open_at_login": false,       // open the loader when you sign in
+    "desktop_shortcut": false,    // Windows: a Desktop shortcut for the loader itself
     "last_group": ["work", "side"] // profiles last started together ("Start group")
   },
   "autostart_profiles": ["work"], // profiles started when you sign in
@@ -97,8 +136,10 @@ It's stored in `~/.config/claude-profiles/` on Linux and in
   "previous_url_handler": null,   // restored on uninstall
   "desktop_bin": null,            // override the detected Claude executable
   "window_class": true,           // Linux: --class so each profile gets its own dock icon
-  "desktop_shortcuts": true,      // Windows: Desktop shortcuts
+  "desktop_shortcuts": true,      // Windows: Desktop shortcuts for the profiles
   "path_added": false,            // Windows: bin folder added to the user PATH
+  "usage_online": false,          // experimental: ask the account for exact limits
+  "usage_url": "",                // where that request goes, if it ever moves
   "version": 1
 }
 ```

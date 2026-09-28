@@ -165,6 +165,9 @@ class WindowsPlatform(Platform):
     def valid_hotkey(self, accel: str) -> bool:
         return hotkeys.parse(accel) is not None
 
+    def hotkey_problem(self, accel) -> Optional[str]:
+        return hotkeys.problem(accel)
+
     def hotkey_label(self, accel) -> str:
         return hotkeys.normalize(accel) or "none"
 
@@ -190,10 +193,13 @@ class WindowsPlatform(Platform):
         if any(p.cli for p in cfg.profiles):
             cfg.path_added = ui.yes_no(f"Add {paths.short(paths.BIN_DIR)} to your user PATH so "
                                        "the claude-<name> commands work in any terminal?", True)
-        if cfg.loader.enabled:
-            print("A small tray agent starts when you sign in to Windows. It owns the hotkey\n"
-                  "and offers a quick menu to start profiles.")
-            cfg.loader.tray = ui.yes_no("Use the tray agent?", True)
+
+    def loader_questions(self, loader, ui) -> None:
+        loader.desktop_shortcut = ui.yes_no("Put a shortcut for the loader itself on the Desktop?",
+                                            loader.desktop_shortcut)
+        print("A small tray agent starts when you sign in to Windows. It owns the hotkey\n"
+              "and offers a quick menu to start profiles and open the token usage window.")
+        loader.tray = ui.yes_no("Use the tray agent?", loader.tray)
 
     def after_setup(self, cfg, ui) -> None:
         try:
@@ -271,6 +277,24 @@ class WindowsPlatform(Platform):
     def gui(self):
         from . import gui
         return gui
+
+    has_usage_window = True
+
+    def run_usage_window(self, cfg) -> int:
+        from . import usage_window
+        return usage_window.run(self)
+
+    def open_usage_window(self) -> None:
+        """Open it as a separate process (from the loader menu or the tray)."""
+        if not winutil.focus_window(integration.USAGE_TITLE):
+            winutil.start_detached([winutil.pythonw(), "-m", "claude_profiles.windows", "usage"],
+                                   cwd=str(paths.HOME))
+
+    def after_self_update(self, cfg) -> None:
+        # The new code creates the shortcuts, so run `apply` in a fresh process.
+        integration.stop_agent()
+        winutil.start_detached([winutil.pythonw(), "-m", "claude_profiles.windows",
+                                "apply", "--quiet"], cwd=str(paths.HOME))
 
     def run_agent(self) -> int:
         from . import agent

@@ -5,7 +5,7 @@ import sys
 
 from . import VERSION
 from . import config as cfgmod
-from . import launch, paths, tui
+from . import launch, paths, selfupdate, tui, usage
 
 
 def _need_config():
@@ -22,6 +22,11 @@ def cmd_doctor(plat) -> int:
     for label, value in plat.doctor():
         print(f"{label:<23}: {value}")
     print(f"{'Claude Code CLI':<23}: {plat.cli_bin() or 'not installed'}")
+    print(f"{'Program folder':<23}: {paths.short(paths.APP_DIR)}")
+    known = selfupdate.last_result()
+    if known:
+        state = "update available" if known["available"] else "up to date"
+        print(f"{'Latest release':<23}: {known['latest']} ({state})")
     cfg = cfgmod.load()
     print(f"{'Config':<23}: {paths.CONFIG_FILE if cfg else 'not set up'}")
     if cfg:
@@ -29,6 +34,14 @@ def cmd_doctor(plat) -> int:
         for p in cfg.profiles:
             state = "running" if p.id in running else "stopped"
             print(f"  - {p.id:<12} {p.name:<16} {state:<8} {p.data_location}")
+    return 0
+
+
+def cmd_usage(plat, cfg, args) -> int:
+    if not args.text and plat.has_usage_window:
+        return plat.run_usage_window(cfg)
+    for line in usage.text_report(cfg, online=args.online or cfg.usage_online):
+        print(line)
     return 0
 
 
@@ -56,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet", action="store_true")
     p = sub.add_parser("update", help="check for (and install) Claude Desktop updates")
     p.add_argument("--check", action="store_true", help="only check, do not install")
+    p = sub.add_parser("usage", help="tokens spent per profile and when each window resets")
+    p.add_argument("--text", action="store_true",
+                   help="print a table instead of opening the window")
+    p.add_argument("--online", action="store_true",
+                   help="ask Claude for the exact limits (experimental)")
+    p = sub.add_parser("self-update", help="update Claude Loader itself from GitHub")
+    p.add_argument("--check", action="store_true", help="only look, do not install")
     sub.add_parser("doctor", help="show what was detected on this system")
     sub.add_parser("agent", help="background tray agent that owns the hotkey (Windows)")
     sub.add_parser("autostart", help="run at sign-in: start chosen profiles, open the loader")
@@ -85,8 +105,12 @@ def run(plat, args) -> int:
         return tui.run_uninstall(plat)
     if args.command == "doctor":
         return cmd_doctor(plat)
+    if args.command == "self-update":
+        return tui.self_update_menu(plat, args.check)
 
     cfg = _need_config()
+    if args.command == "usage":
+        return cmd_usage(plat, cfg, args)
     if args.command == "loader":
         if not cfg.loader.enabled:
             print("The loader is turned off. Turn it on with: claude-profiles manage",

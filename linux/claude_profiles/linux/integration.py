@@ -26,6 +26,10 @@ KEYBINDING = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
 KEYBINDING_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/claude-profiles-loader/"
 
 HOTKEY_RE = re.compile(r"^(<(Super|Shift|Control|Ctrl|Primary|Alt|Meta|Hyper)>)+[A-Za-z0-9_]+$")
+# A shortcut is between two and four keys: one to three modifiers and one key.
+MIN_KEYS, MAX_KEYS = 2, 4
+# Shift on its own is not enough: it would swallow ordinary typing.
+REAL_MODIFIERS = {"super", "control", "ctrl", "primary", "alt", "meta", "hyper"}
 
 
 # --- helpers --------------------------------------------------------------------
@@ -271,8 +275,27 @@ def _set_keybinding_list(items: List[str]) -> bool:
     return bool(r and r.returncode == 0)
 
 
+def hotkey_problem(accel: Optional[str]) -> Optional[str]:
+    """Why this shortcut cannot be used, in one sentence. None means it is fine."""
+    if not accel:
+        return "Press a key combination."
+    if not HOTKEY_RE.match(accel):
+        return "Write it in the GNOME form, for example <Super><Shift>c."
+    mods = [m.lower() for m in re.findall(r"<([^>]+)>", accel)]
+    keys = len(mods) + 1
+    if keys < MIN_KEYS:
+        return f"Use at least {MIN_KEYS} keys, for example <Control><Alt>c."
+    if keys > MAX_KEYS:
+        return f"Use at most {MAX_KEYS} keys."
+    if len(set(mods)) != len(mods):
+        return "The same modifier is used twice."
+    if not set(mods) & REAL_MODIFIERS:
+        return "Add Super, Ctrl or Alt - Shift on its own would swallow normal typing."
+    return None
+
+
 def valid_hotkey(accel: str) -> bool:
-    return bool(accel and HOTKEY_RE.match(accel))
+    return hotkey_problem(accel) is None
 
 
 def hotkey_label(accel: Optional[str]) -> str:

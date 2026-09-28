@@ -32,7 +32,7 @@ MF_STRING, MF_GRAYED, MF_CHECKED, MF_SEPARATOR = 0x0, 0x1, 0x8, 0x800
 TPM_RIGHTBUTTON, TPM_RETURNCMD = 0x2, 0x100
 IDI_APPLICATION = 32512
 HOTKEY_ID, TIMER_ID = 1, 1
-CMD_OPEN, CMD_QUIT, CMD_ALL, CMD_GROUP, CMD_PROFILE = 1, 2, 3, 4, 100
+CMD_OPEN, CMD_QUIT, CMD_ALL, CMD_GROUP, CMD_USAGE, CMD_PROFILE = 1, 2, 3, 4, 5, 100
 
 
 class WNDCLASSEXW(ctypes.Structure):
@@ -238,6 +238,8 @@ class Agent:
                                    f"Start group: {self.cfg.group_label(48)}")
             if len(profiles) > 1:
                 user32.AppendMenuW(menu, MF_STRING, CMD_ALL, "Start all")
+            user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+            user32.AppendMenuW(menu, MF_STRING, CMD_USAGE, "Token usage...")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, CMD_QUIT, "Quit tray agent (hotkey off until sign-in)")
         pt = wintypes.POINT()
@@ -255,6 +257,9 @@ class Agent:
             self._spawn("launch", *[p.id for p in profiles])
         elif cmd == CMD_GROUP:
             self._spawn("launch", *[p.id for p in self.cfg.group()])
+        elif cmd == CMD_USAGE:
+            if not winutil.focus_window(integration.USAGE_TITLE):
+                self._spawn("usage")
         elif cmd >= CMD_PROFILE and cmd - CMD_PROFILE < len(profiles):
             self._spawn("launch", profiles[cmd - CMD_PROFILE].id)
 

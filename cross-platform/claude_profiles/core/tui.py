@@ -5,6 +5,7 @@ import shutil
 import sys
 from typing import List, Optional, Sequence, Tuple
 
+from . import VERSION
 from . import config as cfgmod
 from . import launch, paths, security
 from .config import Config, LoaderSettings, Profile
@@ -230,6 +231,10 @@ def ask_loader(plat, loader: LoaderSettings) -> LoaderSettings:
         loader.password = None
     loader.check_updates = yes_no("Check for Claude Desktop updates when the loader opens?",
                                   loader.check_updates)
+    loader.check_app_updates = yes_no("Also look for new Claude Loader versions? "
+                                      "(It only tells you; it never installs by itself.)",
+                                      loader.check_app_updates)
+    plat.loader_questions(loader, sys.modules[__name__])
     return loader
 
 
@@ -531,13 +536,59 @@ def check_updates_menu(plat, cfg) -> None:
         print(green("Done.") if ok else red(f"Failed: {msg}"))
 
 
+def usage_menu(cfg) -> None:
+    from . import usage as usagemod
+    header("Token usage")
+    for line in usagemod.text_report(cfg, online=cfg.usage_online):
+        print(line)
+
+
+def self_update_menu(plat, check_only: bool = False) -> int:
+    """Look for a newer Claude Loader on GitHub and, if asked, install it."""
+    from . import selfupdate
+    print("Looking for a newer Claude Loader...")
+    try:
+        info = selfupdate.check(force=True)
+    except selfupdate.UpdateError as e:
+        print(red(f"Could not check for updates: {e}"))
+        return 1
+    print(f"  Installed: {info['current']}")
+    print(f"  Latest:    {info['latest'] or 'unknown'}")
+    if not info["available"]:
+        print(green(info["message"]))
+        return 0
+    print(yellow(info["message"]))
+    if info["notes"]:
+        print()
+        print(dim(info["notes"][:800]))
+        print()
+    if check_only:
+        print(f"Install it with: {bold('claude-profiles self-update')}   ({info['page']})")
+        return 0
+    print(f"It replaces the program in {paths.short(paths.APP_DIR)}. Your profiles, settings\n"
+          "and logins are not touched.")
+    if not yes_no(f"Download and install {info['latest']} now?", True):
+        return 0
+    try:
+        selfupdate.install(info["url"])
+    except selfupdate.UpdateError as e:
+        print(red(f"Update failed: {e}"))
+        return 1
+    print(green(f"Claude Loader {info['latest']} is installed."))
+    cfg = cfgmod.load()
+    if cfg is not None:
+        plat.after_self_update(cfg)
+    warn("Close and reopen the loader to use the new version.")
+    return 0
+
+
 def run_manage(plat) -> int:
     while True:
         cfg = cfgmod.load()
         if cfg is None:
             print("claude-profiles is not set up yet.")
             return run_setup(plat)
-        header("Claude Loader")
+        header(f"Claude Loader {VERSION}")
         version = plat.installed_version()
         print(f"Claude Desktop: {version or red('not installed')}")
         print_profiles(cfg, plat.running_profile_ids(cfg))
@@ -558,8 +609,10 @@ def run_manage(plat) -> int:
                     ("loader", "Loader and hotkey settings"),
                     ("autostart", "What starts when you sign in"),
                     ("url", f"Turn claude:// routing {'off' if cfg.url_handler else 'on'}"),
+                    ("usage", "Token usage per profile"),
                     ("update", "Check for Claude Desktop updates"),
-                    ("repair", "Repair shortcuts, icons and commands"),
+                    ("selfupdate", "Check for Claude Loader updates"),
+                    ("repair", "Recreate shortcuts, icons and commands"),
                     ("uninstall", "Uninstall claude-profiles"),
                     ("quit", "Quit")]
         choice = choose("What do you want to do?", options, len(options) - 1)
@@ -594,8 +647,12 @@ def run_manage(plat) -> int:
                 explain_url_handler(plat)
             cfg.url_handler = not cfg.url_handler
             apply_and_save(plat, cfg)
+        elif choice == "usage":
+            usage_menu(cfg)
         elif choice == "update":
             check_updates_menu(plat, cfg)
+        elif choice == "selfupdate":
+            self_update_menu(plat)
         elif choice == "repair":
             plat.rebuild_icons()
             apply_and_save(plat, cfg)

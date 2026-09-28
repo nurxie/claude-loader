@@ -17,8 +17,13 @@ Claude Loader is one program with several jobs. Its command is
   together. It also keeps the profile copy of Claude up to date.
 - **Tray agent:** a small background helper that owns the hotkey and offers a
   quick "Start …" menu in the notification area.
+- **Token usage window:** a bar per profile showing how much of the 5-hour
+  window is spent, when it resets, and the week by model.
 - **Uninstaller:** removes everything it created. It asks before it deletes any
   profile data.
+
+It also keeps itself current: it tells you when a new Claude Loader release is
+out and installs it when you click **Update**.
 
 > **Unofficial.** Not affiliated with or endorsed by Anthropic. Claude Desktop
 > doesn't officially support several accounts. This uses Electron's standard
@@ -108,10 +113,29 @@ remembered. Next time a **Start <names>** button starts them in one click, and
 entering selection mode (**Select** or holding the mouse button) starts with
 them already ticked. The tray menu has the same **Start group** item.
 
-The `☰` menu has **Add profile**, **Paste sign-in link**, **Check for
-updates**, **Settings** and **About**. Settings cover the hotkey, tray agent,
-what starts at sign-in, Desktop shortcuts, PATH, loader password, link
-routing, repair and uninstall.
+The `☰` menu has **Add profile**, **Token usage**, **Paste sign-in link**,
+**Check for Claude updates**, **Check for Claude Loader updates**, **Settings**
+and **About**. Settings cover the hotkey, tray agent, what starts at sign-in,
+Desktop shortcuts (for the profiles and for the loader itself), PATH, loader
+password, link routing, Claude Loader's own updates, the token usage source,
+recreating shortcuts and uninstalling.
+
+### Changing the hotkey
+
+**Settings › Hotkey › Change…**, then press the combination you want. It takes
+effect as soon as you save — no restart. A shortcut is **two to four keys**:
+one to three modifiers (Ctrl, Alt, Shift, Win) and then a normal key, with at
+least one of Ctrl, Alt or Win among them, because Shift on its own would
+swallow ordinary typing. If the combination cannot be used, the dialog says why
+in one line; if another program already owns it, Settings says so before you
+save. Ready-made ones are one click away, and **None** turns the hotkey off.
+
+### Shortcuts you deleted by accident
+
+**Settings › Recreate shortcuts and icons** builds the whole set again: the
+Start-menu entries, the Desktop shortcuts, the colored icons and the
+`claude-<name>` commands. Nothing else changes. The terminal manager has the
+same entry, and so does `claude-profiles apply`.
 
 ### Starting at sign-in
 
@@ -136,19 +160,22 @@ The loader follows the Windows light/dark setting and your accent color.
 The agent starts when you sign in to Windows (the **Claude Profiles** shortcut
 in your Startup folder). It owns the hotkey. Left-click the tray icon to open
 the loader, or right-click it for **Start <profile>**, **Start group**,
-**Start all** and **Open Claude Loader**. It uses about 20–30 MB of memory. If the hotkey is already taken by
-another program, the tray icon shows a notice. Pick another hotkey in
-Settings.
+**Start all**, **Token usage** and **Open Claude Loader**. It uses about
+20–30 MB of memory. If the hotkey is already taken by another program, the tray
+icon shows a notice. Pick another hotkey in Settings.
 
 ### Terminal
 
 ```bat
-claude-profiles            :: manager menu (or setup on the first run)
+claude-profiles              :: manager menu (or setup on the first run)
 claude-profiles loader
 claude-profiles launch work personal
 claude-profiles list
-claude-profiles update     :: refresh the Claude copy after Claude updated
-claude-profiles doctor     :: what was detected (useful for bug reports)
+claude-profiles usage        :: the token window (--text prints a table)
+claude-profiles update       :: refresh the Claude copy after Claude updated
+claude-profiles self-update  :: update Claude Loader itself (--check only looks)
+claude-profiles apply        :: recreate shortcuts, icons and commands
+claude-profiles doctor       :: what was detected (useful for bug reports)
 claude-profiles uninstall
 ```
 
@@ -184,6 +211,59 @@ standard window, not in the profile that asked for it. Two ways around it:
 
 If a Google login switched the standard profile to the wrong account, sign out
 there and sign back in with the right one.
+
+---
+
+## Token usage
+
+Open it from the loader's `☰ › Token usage…`, the tray menu, the Start menu
+(**Claude Profiles › Claude Token Usage**) or `claude-profiles usage`. It is a
+window of its own, meant to be left open next to your work.
+
+Each profile gets two bars:
+
+- **5-hour window** — what this window has cost so far and **when it resets**.
+  Claude's allowance runs in five-hour windows that open with your first
+  message, so the window shows both the countdown and the wall-clock time.
+- **Last 7 days** — a rolling total, with the busiest models named.
+
+The bar turns amber at 75 % and red at 90 %. It refreshes itself every minute.
+
+**Where the numbers come from.** Claude Code records what every message cost,
+in the profile's own config folder. Claude Loader adds that up. Nothing is sent
+anywhere, no sign-in is needed, and it works with Claude closed. Two honest
+limits follow from that:
+
+- It counts the **Claude Code CLI and the Desktop app's Code tab**, which share
+  a profile's config folder. Chat in the Desktop app is not recorded by Claude
+  Code, so it is not counted.
+- Your plan's actual allowance is not written down anywhere on your PC. Set it
+  per profile under **Limits…** — that is what the bar fills against. Until you
+  do, the busiest window seen so far stands in for it and the window says so;
+  with no history at all there is no bar, only the amount used.
+
+**Exact limits (experimental).** Settings has a switch to ask your account for
+the real remaining limits instead of counting. It only works when the profile
+keeps its sign-in in its own folder, which Windows often does not, and it falls
+back to counting whenever it cannot. It is off by default.
+
+---
+
+## Keeping Claude Loader up to date
+
+The loader checks github.com once a day for a newer release and shows a banner
+when there is one. Nothing is installed until you click **Update**. You can
+also use `☰ › Check for Claude Loader updates`, **Settings › Check now**, or
+`claude-profiles self-update` (`--check` only looks).
+
+An update downloads the release and replaces the program in
+`%LOCALAPPDATA%\claude-profiles\app`. Your profiles, settings, passwords and
+logins are not touched, and neither is the Python environment. If the swap
+cannot be done, the old version is put back and nothing changes. Close and
+reopen the loader afterwards.
+
+Turn the check off in **Settings › Claude Loader itself** if you would rather
+update by re-running `Install.cmd` from the repository.
 
 ---
 
@@ -231,7 +311,10 @@ hasn't been tested on a real machine yet.*
 |  … Claude Desktop data                     | `<data folder>\desktop` (or the adopted folder)        |
 |  … Claude Code data (CLI and Code tab)     | `<data folder>\cli`                                    |
 | Copy of Claude for profiles (MSIX)         | `%LOCALAPPDATA%\ClaudePortable\`                       |
+| Last update check                          | `%LOCALAPPDATA%\claude-profiles\update.json`           |
 | Shortcuts                                  | Start menu › Claude Profiles, Desktop (optional)       |
+| … Start menu                               | Claude (Name), Claude Loader, Claude Token Usage       |
+| … Desktop                                  | Claude (Name), and Claude Loader if you asked for it   |
 | Sign-in autostart and tray agent           | Startup folder › Claude Profiles                       |
 | `claude://` routing (only if turned on)    | `HKCU\Software\Classes\claude`                         |
 
@@ -273,7 +356,9 @@ in `%LOCALAPPDATA%\claude-profiles\logs\<id>.log`.
 | All profiles share one taskbar button            | Expected: Claude sets its own taskbar identity. The shortcuts still have their colors. |
 | A profile opens the wrong account                | Check `claude-profiles list` for its data folder. Sign out there and sign in with e-mail + code. |
 | Google sign-in lands in the wrong window         | Use **Paste sign-in link** (see [Signing in](#signing-in)). |
-| Icons look wrong after a Claude update           | Settings › Repair shortcuts and icons. |
+| A shortcut is gone, or the icons look wrong after a Claude update | Settings › Recreate shortcuts and icons (or `claude-profiles apply`). |
+| The usage window says "no activity"              | That profile has not used the Claude Code CLI or the Code tab yet. Desktop chat is not counted. |
+| A usage bar has no limit                         | Set your plan's allowance under Limits…, or give it a few windows of history to learn from. |
 | `claude-work` is not recognized                  | Open a new terminal window, or turn on "commands on PATH" in Settings. |
 
 **Cowork** uses one Hyper-V virtual machine per PC, so only one profile can use
@@ -291,6 +376,12 @@ Cowork at a time. Chat and the Code tab aren't affected.
   link routing, the copy/update logic, and the setup wizard, manager and
   uninstaller (including taking over `Claude-Personal`). The loader and all
   its dialogs were rendered and checked in light, dark and standard themes.
+- Added in 0.3.0 and checked on a real machine: the two-to-four-key rule over a
+  table of valid and invalid combinations, the token window and its limits
+  dialog (built and painted, with and without limits), `claude-profiles usage`
+  against real transcripts, the update check against the live GitHub API, and a
+  full self-update of a real release into a sandbox folder.
 - **Not yet tested for real:** the tray agent (hotkey, tray menu), starting
   real Claude instances from the loader, `claude://` routing with a real
-  Google sign-in, and the classic (Squirrel) installer.
+  Google sign-in, the classic (Squirrel) installer, and the experimental
+  "exact limits" switch, which has never reached a live endpoint.

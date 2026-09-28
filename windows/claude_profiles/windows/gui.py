@@ -15,9 +15,9 @@ from typing import Callable, List, Optional
 
 import winreg
 
-from ..core import VERSION
+from ..core import REPO, VERSION
 from ..core import config as cfgmod
-from ..core import icons, launch, paths, security
+from ..core import icons, launch, paths, security, selfupdate
 from ..core.tui import profile_folders
 from . import hotkeys, integration, winutil
 
@@ -281,24 +281,32 @@ MODIFIER_KEYSYMS = {"Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Al
                     "Win_L", "Win_R", "Super_L", "Super_R", "Caps_Lock", "App"}
 
 
+DEFAULT_HOTKEY_HINT = (f"Hold {hotkeys.MIN_KEYS - 1} to {hotkeys.MAX_KEYS - 1} modifiers "
+                       "(Ctrl, Alt, Shift, Win) and press a key. Esc cancels.")
+
+
 def capture_hotkey(parent, on_done: Callable[[Optional[str]], None]) -> None:
+    """Ask for a new shortcut: press it, or pick one of the ready-made ones."""
     dlg = Dialog(parent, "New shortcut")
-    ttk.Label(dlg.body, text="Press the new shortcut for the loader").pack()
+    ttk.Label(dlg.body, text="Press the new shortcut for the loader",
+              font=("Segoe UI Semibold", 11)).pack()
     shown = ttk.Label(dlg.body, text="…", font=("Segoe UI Semibold", 16))
     shown.pack(pady=8)
-    hint = ttk.Label(dlg.body, text="Use Ctrl, Alt or Win plus a key. Esc cancels.",
-                     style="Sub.TLabel")
+    hint = ttk.Label(dlg.body, text=DEFAULT_HOTKEY_HINT, style="Sub.TLabel",
+                     wraplength=int(360 * _theme.scale), justify="center")
     hint.pack()
     presets = ttk.Frame(dlg.body)
     presets.pack(pady=(12, 0))
-    ttk.Label(presets, text="Or pick:", style="Sub.TLabel").pack(side="left", padx=(0, 6))
+    ttk.Label(presets, text="Or pick:", style="Sub.TLabel").grid(row=0, column=0, sticky="w",
+                                                                 padx=(0, 6), pady=2)
 
     def finish(accel):
         dlg.destroy()
         on_done(accel)
 
-    for value, label in hotkeys.PRESETS:
-        ttk.Button(presets, text=label, command=lambda v=value: finish(v)).pack(side="left", padx=2)
+    for index, (value, label) in enumerate(hotkeys.PRESETS):
+        ttk.Button(presets, text=label, command=lambda v=value: finish(v)).grid(
+            row=index // 3, column=index % 3 + 1, padx=2, pady=2, sticky="ew")
 
     def on_key(event):
         if event.keysym == "Escape":
@@ -306,10 +314,14 @@ def capture_hotkey(parent, on_done: Callable[[Optional[str]], None]) -> None:
             return "break"
         if event.keysym in MODIFIER_KEYSYMS:
             return "break"
-        accel = hotkeys.from_tk_event(event.keysym)
-        if not accel:
-            hint.configure(text="Add Ctrl, Alt or Win to the key.")
+        pressed = hotkeys.from_tk_event(event.keysym)
+        shown.configure(text=pressed or "…")
+        problem = hotkeys.problem(pressed)
+        if problem:
+            hint.configure(text=problem, style="Error.TLabel")
             return "break"
+        hint.configure(text=DEFAULT_HOTKEY_HINT, style="Sub.TLabel")
+        accel = hotkeys.normalize(pressed)
         shown.configure(text=accel)
         dlg.after(400, lambda: finish(accel))
         return "break"
@@ -492,6 +504,9 @@ class SettingsDialog(Dialog):
         ttk.Button(row, text="None", command=lambda: self._set_hotkey(None)).pack(side="right")
         ttk.Button(row, text="Change…",
                    command=lambda: capture_hotkey(self, self._set_hotkey)).pack(side="right", padx=4)
+        ttk.Label(b, text=f"{hotkeys.MIN_KEYS} to {hotkeys.MAX_KEYS} keys, ending in a normal one. "
+                          "It applies as soon as you save.",
+                  style="Sub.TLabel").pack(anchor="w")
         self.tray = tk.BooleanVar(value=cfg.loader.tray)
         ttk.Checkbutton(b, text="Run the tray agent at sign-in (needed for the hotkey)",
                         variable=self.tray).pack(anchor="w")
@@ -519,6 +534,9 @@ class SettingsDialog(Dialog):
         self.desktop = tk.BooleanVar(value=cfg.desktop_shortcuts)
         ttk.Checkbutton(b, text="Profile shortcuts on the Desktop",
                         variable=self.desktop).pack(anchor="w")
+        self.loader_desktop = tk.BooleanVar(value=cfg.loader.desktop_shortcut)
+        ttk.Checkbutton(b, text="A shortcut for the loader itself on the Desktop",
+                        variable=self.loader_desktop).pack(anchor="w")
         self.path = tk.BooleanVar(value=cfg.path_added)
         ttk.Checkbutton(b, text=f"claude-<name> commands on PATH ({paths.short(paths.BIN_DIR)})",
                         variable=self.path).pack(anchor="w")
@@ -545,11 +563,29 @@ class SettingsDialog(Dialog):
         ttk.Label(b, text="Reliable alternative: menu > Paste sign-in link.",
                   style="Sub.TLabel").pack(anchor="w", padx=(24, 0))
 
+        ttk.Label(b, text="Claude Loader itself", font=("Segoe UI Semibold", 11)).pack(
+            anchor="w", pady=(14, 0))
+        self.app_updates = tk.BooleanVar(value=cfg.loader.check_app_updates)
+        ttk.Checkbutton(b, text="Look for new Claude Loader versions (never installs on its own)",
+                        variable=self.app_updates).pack(anchor="w")
+        row = ttk.Frame(b)
+        row.pack(fill="x", pady=(2, 0))
+        self.version_label = ttk.Label(row, text=f"Version {VERSION}", style="Sub.TLabel")
+        self.version_label.pack(side="left")
+        ttk.Button(row, text="Check now", command=self._check_app_update).pack(side="right")
+
+        ttk.Label(b, text="Token usage", font=("Segoe UI Semibold", 11)).pack(anchor="w",
+                                                                             pady=(14, 0))
+        self.usage_online = tk.BooleanVar(value=cfg.usage_online)
+        ttk.Checkbutton(b, text="Ask Claude for the exact limits instead of counting "
+                               "locally (experimental)",
+                        variable=self.usage_online).pack(anchor="w")
+
         ttk.Label(b, text="Maintenance", font=("Segoe UI Semibold", 11)).pack(anchor="w",
                                                                             pady=(14, 2))
         row = ttk.Frame(b)
         row.pack(fill="x")
-        ttk.Button(row, text="Repair shortcuts and icons", command=self._repair).pack(side="left")
+        ttk.Button(row, text="Recreate shortcuts and icons", command=self._repair).pack(side="left")
         ttk.Button(row, text="Uninstall…", command=self._uninstall).pack(side="left", padx=6)
         self.error = ttk.Label(b, text="", style="Error.TLabel", wraplength=420)
         self.error.pack(anchor="w", pady=(8, 0))
@@ -559,15 +595,43 @@ class SettingsDialog(Dialog):
         self.show()
 
     def _set_hotkey(self, accel) -> None:
+        problem = hotkeys.problem(accel) if accel else None
+        if problem:
+            self.error.configure(text=problem)
+            return
         self.hotkey = accel
         self.hotkey_label.configure(text=f"Open the loader: {hotkeys.normalize(accel) or 'none'}")
-        if accel:
-            conflicts = _PLAT.hotkey_conflicts(accel)
-            if conflicts:
-                self.error.configure(text=f"{hotkeys.normalize(accel)} is already used by "
-                                          f"{conflicts[0]}.")
+        conflicts = _PLAT.hotkey_conflicts(accel) if accel else []
+        self.error.configure(text=(f"{hotkeys.normalize(accel)} is already used by "
+                                   f"{conflicts[0]}.") if conflicts else "")
+
+    def _check_app_update(self) -> None:
+        """Ask GitHub in the background; every Tk call stays on this thread."""
+        self.version_label.configure(text="Checking…")
+        result = {}
+
+        def work():
+            try:
+                result["info"] = selfupdate.check(force=True)
+            except selfupdate.UpdateError as e:
+                result["error"] = str(e)
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            if "info" in result:
+                info = result["info"]
+                self.version_label.configure(
+                    text=info["message"] + (" Install it from the loader's menu."
+                                            if info["available"] else ""))
+            elif "error" in result:
+                self.version_label.configure(
+                    text=f"Version {VERSION} - could not check ({result['error']})")
             else:
-                self.error.configure(text="")
+                self.after(200, poll)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(200, poll)
 
     def _update_pw(self) -> None:
         if self.pw_on.get():
@@ -579,7 +643,8 @@ class SettingsDialog(Dialog):
         _PLAT.rebuild_icons()
         warnings = _PLAT.apply(self.cfg)
         cfgmod.save(self.cfg)
-        self.error.configure(text=warnings[0] if warnings else "Shortcuts and icons recreated.")
+        self.error.configure(text=warnings[0] if warnings
+                             else "Shortcuts, icons and commands recreated.")
 
     def _uninstall(self) -> None:
         _PLAT.open_terminal([str(paths.MAIN_CMD), "uninstall"])
@@ -605,6 +670,9 @@ class SettingsDialog(Dialog):
         self.cfg.autostart_profiles = [pid for pid, var in self.autostart.items() if var.get()]
         loader.close_after_launch = self.close_after.get()
         loader.check_updates = self.check_updates.get()
+        loader.check_app_updates = self.app_updates.get()
+        loader.desktop_shortcut = self.loader_desktop.get()
+        self.cfg.usage_online = self.usage_online.get()
         self.cfg.desktop_shortcuts = self.desktop.get()
         if self.cfg.path_added and not self.path.get():
             winutil.remove_from_user_path(paths.BIN_DIR)
@@ -793,6 +861,18 @@ class Loader:
                                      command=self.run_update)
         self.banner_btn.pack(side="right")
 
+        # A second banner, for updates of Claude Loader itself.
+        self.app_update: Optional[dict] = None
+        self.app_banner = ttk.Frame(root, padding=(18, 6))
+        self.app_banner_label = ttk.Label(self.app_banner, text="",
+                                          wraplength=int(360 * t.scale))
+        self.app_banner_label.pack(side="left")
+        self.app_banner_btn = ttk.Button(self.app_banner, text="Update",
+                                         style=t.accent_button(), command=self.run_app_update)
+        self.app_banner_btn.pack(side="right")
+        ttk.Button(self.app_banner, text="Later",
+                   command=self.app_banner.pack_forget).pack(side="right", padx=6)
+
         self.content = ttk.Frame(root, padding=(18, 8))
         self.content.pack(fill="both", expand=True)
 
@@ -908,6 +988,8 @@ class Loader:
     def _after_unlock(self) -> None:
         if self.cfg.loader.check_updates:
             self.check_updates(manual=False)
+        if self.cfg.loader.check_app_updates:
+            self.check_app_updates(manual=False)
 
     # --- running state -----------------------------------------------------------
 
@@ -1059,9 +1141,15 @@ class Loader:
         m = tk.Menu(self.root, tearoff=0)
         state = "normal" if len(self.cfg.profiles) < cfgmod.MAX_PROFILES else "disabled"
         m.add_command(label="Add profile…", command=self.add_profile, state=state)
+        m.add_command(label="Token usage…", command=self.open_usage,
+                      state="normal" if self.cfg.profiles else "disabled")
         m.add_command(label="Paste sign-in link…", command=self.paste_link,
                       state="normal" if self.cfg.profiles else "disabled")
-        m.add_command(label="Check for updates", command=lambda: self.check_updates(manual=True))
+        m.add_separator()
+        m.add_command(label="Check for Claude updates",
+                      command=lambda: self.check_updates(manual=True))
+        m.add_command(label="Check for Claude Loader updates",
+                      command=lambda: self.check_app_updates(manual=True))
         m.add_separator()
         m.add_command(label="Settings…", command=self.open_settings)
         m.add_command(label="About", command=self.show_about)
@@ -1116,6 +1204,9 @@ class Loader:
     def paste_link(self) -> None:
         PasteLinkDialog(self.root, self.cfg, self.toast)
 
+    def open_usage(self) -> None:
+        _PLAT.open_usage_window()
+
     def open_settings(self) -> None:
         def saved(warnings):
             self.reload()
@@ -1123,9 +1214,16 @@ class Loader:
         SettingsDialog(self.root, self.cfg, saved)
 
     def show_about(self) -> None:
+        known = self.app_update or selfupdate.last_result()
+        state = ""
+        if known and known.get("available"):
+            state = f"\n{known['latest']} is available - see the menu."
+        elif known:
+            state = "\nThis is the newest release."
         confirm(self.root, "Claude Loader",
-                f"Claude Loader {VERSION}\nRun several Claude accounts and agents side by side.\n"
-                "Free and open source (MIT): github.com/nurxie/claude-loader\n"
+                f"Claude Loader {VERSION}\nRun several Claude accounts and agents side by side."
+                f"{state}\n"
+                f"Free and open source (MIT): github.com/{REPO}\n"
                 "Unofficial, not affiliated with Anthropic.", [("ok", "OK", True)], lambda _r: None)
 
     def toast(self, text: str, ms: int = 2500) -> None:
@@ -1199,6 +1297,58 @@ class Loader:
             body += "\n\nClose the profile windows first."
         confirm(self.root, "Refresh the Claude copy?", body,
                 [("cancel", "Cancel", False), ("update", "Refresh", True)], go)
+
+    # --- updates of Claude Loader itself ------------------------------------------------
+
+    def check_app_updates(self, manual: bool) -> None:
+        def done(info, error):
+            if error:
+                if manual:
+                    self.toast(f"Could not check for Claude Loader updates: {error}", 5000)
+                return
+            self.app_update = info
+            if info["available"]:
+                self.app_banner_label.configure(text=info["message"])
+                self.app_banner_btn.configure(text=info["action"] or "Update")
+                self.app_banner.pack(fill="x", before=self.content)
+            elif manual:
+                self.toast(info["message"], 4000)
+
+        self._in_thread(lambda: selfupdate.check(force=manual), done)
+
+    def run_app_update(self) -> None:
+        info = self.app_update
+        if not info or not info.get("url"):
+            self.check_app_updates(manual=True)
+            return
+
+        def go(rid):
+            if rid != "update":
+                return
+            self.app_banner_btn.state(["disabled"])
+            self.app_banner_btn.configure(text="Working…")
+
+            def done(_result, error):
+                self.app_banner_btn.state(["!disabled"])
+                if error:
+                    self.app_banner_btn.configure(text="Retry")
+                    self.toast(f"Update failed: {error}", 6000)
+                    return
+                self.app_banner.pack_forget()
+                _PLAT.after_self_update(self.cfg)
+                confirm(self.root, f"Claude Loader {info['latest']} is installed",
+                        "Close the loader and open it again to use the new version. Your "
+                        "profiles, settings and logins were not touched.",
+                        [("ok", "Close the loader", True)], lambda _r: self.root.destroy())
+
+            self._in_thread(lambda: selfupdate.install(info["url"]), done)
+
+        notes = f"\n\n{info['notes'][:400]}" if info.get("notes") else ""
+        confirm(self.root, f"Update to Claude Loader {info['latest']}?",
+                f"This downloads the release from github.com/{REPO} and replaces the program in "
+                f"{paths.short(paths.APP_DIR)}. Profiles, settings and logins stay as they are."
+                + notes,
+                [("cancel", "Cancel", False), ("update", "Update", True)], go)
 
 
 def run_loader(plat) -> int:

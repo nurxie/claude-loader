@@ -49,6 +49,10 @@ class Profile:
     # Optional explicit Claude Desktop data folder, e.g. one adopted from the
     # older Windows script (%APPDATA%\Claude-Personal). Default: <data_dir>/desktop.
     desktop_dir: str = ""
+    # Token budget of this account, used by the usage window's progress bars.
+    # 0 means "learn it from the busiest window seen so far".
+    usage_limit: int = 0            # tokens per 5-hour window
+    usage_weekly_limit: int = 0     # tokens per rolling 7 days
 
     @property
     def desktop_data_dir(self) -> Optional[Path]:
@@ -88,6 +92,10 @@ class LoaderSettings:
     tray: bool = True
     # Open the loader when you sign in to the computer.
     open_at_login: bool = False
+    # Windows: put a shortcut for the loader itself on the Desktop.
+    desktop_shortcut: bool = False
+    # Look for new Claude Loader releases on GitHub (never installs by itself).
+    check_app_updates: bool = True
     # Profiles last started together; preselected next time ("Start group").
     last_group: List[str] = field(default_factory=list)
 
@@ -110,6 +118,11 @@ class Config:
     path_added: bool = False
     # Profiles started automatically when you sign in to the computer.
     autostart_profiles: List[str] = field(default_factory=list)
+    # Ask Claude for the exact remaining limits instead of counting locally.
+    # Experimental: it needs a credentials file the CLI does not always write.
+    usage_online: bool = False
+    # Where that request goes, in case the address ever changes (see usage_online.py).
+    usage_url: str = ""
     version: int = CONFIG_VERSION
 
     # --- lookup helpers -------------------------------------------------
@@ -174,6 +187,9 @@ class Config:
                 raise ConfigError(f"Unknown color '{p.color}'.")
             if not p.system_default and not os.path.isabs(p.data_dir):
                 raise ConfigError(f"Data folder of '{p.name}' must be an absolute path.")
+            for value in (p.usage_limit, p.usage_weekly_limit):
+                if not isinstance(value, int) or value < 0:
+                    raise ConfigError(f"Token limits of '{p.name}' must be 0 or more.")
 
 
 # --- load / save ------------------------------------------------------------

@@ -123,6 +123,14 @@ class LinuxPlatform(Platform):
     def valid_hotkey(self, accel: str) -> bool:
         return integration.valid_hotkey(accel)
 
+    def hotkey_problem(self, accel) -> Optional[str]:
+        return integration.hotkey_problem(accel)
+
+    def after_self_update(self, cfg) -> None:
+        subprocess.Popen([str(paths.MAIN_CMD), "apply", "--quiet"], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, cwd=str(paths.HOME))
+
     def hotkey_label(self, accel) -> str:
         return integration.hotkey_label(accel)
 

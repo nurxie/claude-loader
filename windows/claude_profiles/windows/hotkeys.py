@@ -17,27 +17,55 @@ for _c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
 for _n in range(1, 25):
     _KEYS[f"f{_n}"] = 0x6F + _n
 
+# A shortcut is between two and four keys: one to three modifiers and one key.
+MIN_KEYS, MAX_KEYS = 2, 4
+
 PRESETS = [("Win+Shift+C", "Win+Shift+C"), ("Ctrl+Alt+C", "Ctrl+Alt+C"),
-           ("Ctrl+Shift+Space", "Ctrl+Shift+Space")]
+           ("Win+Alt+C", "Win+Alt+C"), ("Ctrl+Shift+Space", "Ctrl+Shift+Space"),
+           ("Ctrl+Alt+Shift+C", "Ctrl+Alt+Shift+C")]
+
+
+def _split(accel: Optional[str]) -> list:
+    return [p.strip().lower() for p in (accel or "").split("+") if p.strip()]
+
+
+def problem(accel: Optional[str]) -> Optional[str]:
+    """Why this shortcut cannot be used, in one sentence. None means it is fine."""
+    parts = _split(accel)
+    if not parts:
+        return "Press a key combination."
+    if len(parts) < MIN_KEYS:
+        return f"Use at least {MIN_KEYS} keys, for example Ctrl+Alt+C."
+    if len(parts) > MAX_KEYS:
+        return f"Use at most {MAX_KEYS} keys."
+    modifiers = parts[:-1]
+    unknown = next((p for p in modifiers if p not in _MODS), None)
+    if unknown:
+        return f"\"{unknown}\" is not a modifier. Use Ctrl, Alt, Shift or Win."
+    if parts[-1] in _MODS:
+        return "Finish the shortcut with a normal key, not a modifier."
+    if parts[-1] not in _KEYS:
+        return f"\"{parts[-1]}\" cannot be used as the last key."
+    if len({_MODS[p] for p in modifiers}) != len(modifiers):
+        return "The same modifier is used twice."
+    mods = 0
+    for p in modifiers:
+        mods |= _MODS[p]
+    # Shift alone is not enough: it would steal ordinary typing.
+    if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
+        return "Add Ctrl, Alt or Win - Shift on its own would swallow normal typing."
+    return None
 
 
 def parse(accel: Optional[str]) -> Optional[Tuple[int, int]]:
     """'Win+Shift+C' -> (modifiers, virtual key), or None if invalid."""
-    if not accel:
+    if problem(accel):
         return None
-    parts = [p.strip().lower() for p in accel.split("+") if p.strip()]
-    if len(parts) < 2:
-        return None
+    parts = _split(accel)
     mods = 0
     for p in parts[:-1]:
-        if p not in _MODS:
-            return None
         mods |= _MODS[p]
-    key = _KEYS.get(parts[-1])
-    # Shift alone is not enough: it would steal ordinary typing.
-    if key is None or not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
-        return None
-    return mods, key
+    return mods, _KEYS[parts[-1]]
 
 
 def normalize(accel: Optional[str]) -> Optional[str]:
@@ -67,8 +95,12 @@ def is_free(accel: str) -> bool:
     return True
 
 
-def from_tk_event(keysym: str) -> Optional[str]:
-    """Build an accelerator from a Tk key event plus the modifier keys held right now."""
+def from_tk_event(keysym: str) -> str:
+    """The shortcut a Tk key event plus the modifiers held right now spell out.
+
+    The result is not checked; pass it to `problem()` to say what is wrong with
+    it, or to `normalize()` to get the value to store.
+    """
     user32 = ctypes.windll.user32
 
     def down(vk):
@@ -85,4 +117,4 @@ def from_tk_event(keysym: str) -> Optional[str]:
         names.append("Shift")
     key = {"space": "Space", "Return": "Enter", "Prior": "PageUp", "Next": "PageDown"}.get(
         keysym, keysym)
-    return normalize("+".join(names + [key]))
+    return "+".join(names + [key])

@@ -116,7 +116,13 @@ same choices under **What starts when you sign in**.
 
 The main menu (`☰`) has **Add profile**, **Paste sign-in link**, **Check for
 updates** and **Settings**. Settings cover the hotkey, loader password, update check,
-link routing, repair and uninstall.
+link routing, recreating the menu entries and uninstall.
+
+**The hotkey** is two to four keys: one to three modifiers and then a normal
+key, with at least one of Super, Ctrl or Alt among them, because Shift on its
+own would swallow ordinary typing. It is stored in the GNOME form,
+`<Super><Shift>c`. Changing it takes effect at once; if another custom shortcut
+already uses the same keys, you are told which one.
 
 A green **● running** label shows which profiles are open. When a new Claude
 Desktop version is out, a banner with an **Update** button appears. Your system
@@ -129,10 +135,19 @@ claude-profiles            # manager menu (or setup on the first run)
 claude-profiles loader     # open the loader
 claude-profiles launch work personal
 claude-profiles list
-claude-profiles update     # check for and install Claude Desktop updates
-claude-profiles doctor     # show what was detected (useful for bug reports)
+claude-profiles usage --text  # tokens per profile and when each window resets
+claude-profiles update        # check for and install Claude Desktop updates
+claude-profiles self-update   # update Claude Loader itself (--check only looks)
+claude-profiles apply         # recreate menu entries, icons and commands
+claude-profiles doctor        # show what was detected (useful for bug reports)
 claude-profiles uninstall
 ```
+
+`usage` counts the tokens each profile has spent from the history Claude Code
+keeps in the profile's own config folder, and says when its five-hour window
+resets. On Linux it prints a table; the window with the bars exists on Windows
+only so far. Set a profile's allowance by putting `usage_limit` in
+`config.json` (see [cross-platform/README.md](../cross-platform/README.md)).
 
 With the CLI option on, each profile also has a command such as `claude-work`.
 It runs the Claude Code CLI with that profile's own login and settings, and
@@ -225,7 +240,12 @@ menu entry does.
   normal `sudo apt upgrade`. All profiles use the same installed app, so one
   update covers them all. Restart open Claude windows afterwards.
 - **Claude Code CLI:** the native installer updates itself in the background.
-- **claude-profiles:** run `bash linux/install.sh` again from the new files.
+- **Claude Loader itself:** `claude-profiles self-update` looks for a new
+  release on GitHub and installs it after you say yes (`--check` only looks).
+  It replaces the program in `~/.local/share/claude-profiles/app`; profiles,
+  settings and logins are untouched, and the old version is put back if the
+  swap fails. Running `bash linux/install.sh` again from the new files still
+  works and is the way to go when the installer itself changed.
 
 ---
 
@@ -260,7 +280,8 @@ instance printed on startup is in `~/.local/share/claude-profiles/logs/<id>.log`
 | Claude starts but ignores the profile          | Claude Desktop may not pass options through. Set `"desktop_bin"` in the config to the real executable (see `doctor`), then run `claude-profiles apply`. |
 | Extra `--class` option causes trouble          | Set `"window_class": false` in the config, then run `claude-profiles apply`. |
 | Google sign-in lands in the wrong window       | Turn on link routing (Settings) or use e-mail + code.                      |
-| Icons look wrong after a Claude update         | Loader → Settings → Repair, or `claude-profiles manage` → Repair.          |
+| A menu entry is gone, or icons look wrong after a Claude update | Loader → Settings → Recreate, `claude-profiles manage` → Recreate, or `claude-profiles apply`. |
+| `usage` says "no activity"                     | That profile has not used the Claude Code CLI or the Code tab yet. Desktop chat is not recorded. |
 
 **Cowork** runs its tasks in a local QEMU/KVM virtual machine. Running Cowork
 in several profiles at the same time hasn't been tested.
@@ -275,4 +296,6 @@ in several profiles at the same time hasn't been tested.
   and pasted links, the setup wizard, the manager and the uninstaller. The
   update check was run against Anthropic's real repository.
 - **Not yet tested:** the loader window and real Claude Desktop instances on a
-  GNOME desktop.
+  GNOME desktop. Everything added in 0.3.0 — the two-to-four-key rule for the
+  GNOME hotkey, `usage`, `self-update` — was written and checked on Windows and
+  has not been run on Ubuntu yet.
