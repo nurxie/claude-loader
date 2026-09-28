@@ -212,20 +212,61 @@ Cancel that, copy the `claude://…` link, then in the loader choose
 
 ## Turning on the token figures
 
-Signing in inside the Claude app signs the app in — but the app keeps that
-session in its own encrypted storage, where Claude Loader cannot read it. Until
-the profile's **terminal command** is signed in too, the loader can name the
-account but not show percentages.
+**The progress bars need one extra sign-in per profile, in the terminal.**
+Signing in inside the Claude app signs *the app* in, and the app keeps that
+session in its own encrypted storage, where Claude Loader cannot read it. So a
+profile can be perfectly signed in and still show no percentages.
 
-One command per profile, once:
+Until you do this, the profile shows its account but no bar, and
+`claude-profiles usage` says so in as many words:
 
-```bash
-claude-work        # then /login
+```
+Personal (personal)  -  you@example.org, counted on this PC
+    5-hour window: no open window
+    Exact limits unavailable: signed in as you@example.org in the Claude app,
+    which keeps its token to itself - run `claude-personal` once and sign in there.
 ```
 
-After that the loader asks that account directly and shows how much of the
-five-hour window is gone and exactly when it resets. Signing in through the
-terminal does not sign you out of the app — they share the profile's folder.
+### What to run
+
+Once per profile, in any terminal:
+
+```bash
+claude-personal
+```
+
+The command is `claude-` plus the profile's short id. You never have to work it
+out: it is printed in the message above, shown under the profile in the loader
+before the account is known, and listed by `claude-profiles list`.
+
+The first run has nothing to sign in with, so Claude Code starts the sign-in by
+itself. If it does not, type `/login`. Use **your e-mail address and the code
+Claude sends you** — the same account the profile already uses. Then `/exit`.
+
+### Checking it worked
+
+```bash
+claude-profiles usage
+```
+
+The profile should now read **`from your account`**, with a percentage and a
+reset time:
+
+```
+Personal (personal)  -  you@example.org, from your account
+    5-hour window: 1% used, resets in 3h 48m (02:40)
+    last 7 days:   16% used, resets in 111h 08m
+```
+
+The loader picks this up on its own within three minutes; closing and reopening
+it is faster.
+
+### Two things worth knowing
+
+- **It does not sign you out of the app.** The terminal and the app's Code tab
+  share that profile's folder, so both stay signed in to the same account.
+- **A profile that has never been started has nothing to sign in yet.** Open it
+  from the loader once, let it sign in, then run the command.
 
 ---
 

@@ -318,13 +318,22 @@ _limits_cache: Dict[str, _Cached] = {}
 _identity_cache: Dict[str, _Cached] = {}
 
 
-def _remembered(store: Dict[str, _Cached], key: str, seconds: float, force: bool, ask):
-    """Ask, but not more often than `seconds` - failures are remembered too."""
+def _remembered(store: Dict[str, _Cached], key: str, seconds: float, force: bool, ask,
+                error_seconds: float = CACHE_SECONDS):
+    """Ask, but not more often than `seconds`.
+
+    A failure is remembered for much less time than an answer: the usual reason
+    for one is that the profile has just not been signed in yet, and when that
+    changes the interface should notice in a moment rather than a quarter of an
+    hour.
+    """
     cached = store.get(key)
-    if cached and not force and time.time() - cached.at < seconds:
-        if cached.value is not None:
-            return cached.value
-        raise Unavailable(cached.error)
+    if cached and not force:
+        fresh_for = seconds if cached.value is not None else min(seconds, error_seconds)
+        if time.time() - cached.at < fresh_for:
+            if cached.value is not None:
+                return cached.value
+            raise Unavailable(cached.error)
     try:
         value = ask()
     except Unavailable as e:

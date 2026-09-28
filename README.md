@@ -65,6 +65,13 @@ folder with `cross-platform/`. After setup you get:
 - `claude-profiles` to manage everything later, and
   `claude-profiles uninstall` to remove it.
 
+**One extra step for the progress bars.** Signing a profile in inside the
+Claude app is enough to use it, but the app keeps that session to itself. For
+the loader to show percentages and reset times, sign that profile's terminal
+command in once as well — `claude-work`, then the e-mail code. The
+[guide](docs/GETTING-STARTED.md#turning-on-the-token-figures) spells it out, and
+`claude-profiles usage` tells you which command to run for which profile.
+
 Later versions install themselves: the loader says when a new release is out
 and updates on one click, or run `claude-profiles self-update`.
 

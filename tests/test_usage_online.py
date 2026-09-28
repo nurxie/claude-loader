@@ -209,5 +209,52 @@ class TestWhoWithoutAToken(unittest.TestCase):
                 usage_online._token(usage_online._credentials(profile))
             self.assertIn("expired", str(caught.exception))
 
+
+
+class TestRemembering(unittest.TestCase):
+    """Answers are kept for a while; failures only briefly, because the usual
+    reason for one is a profile that has just not been signed in yet."""
+
+    def setUp(self):
+        self.store = {}
+        self.calls = []
+
+    def _ask(self, value):
+        def ask():
+            self.calls.append(1)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        return ask
+
+    def test_an_answer_is_not_asked_for_twice(self):
+        for _ in range(3):
+            got = usage_online._remembered(self.store, "p", 900, False, self._ask("x"))
+        self.assertEqual(got, "x")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_force_asks_again(self):
+        usage_online._remembered(self.store, "p", 900, False, self._ask("x"))
+        usage_online._remembered(self.store, "p", 900, True, self._ask("x"))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_failure_is_repeated_back_while_it_is_fresh(self):
+        boom = usage_online.Unavailable("not signed in")
+        for _ in range(2):
+            with self.assertRaises(usage_online.Unavailable):
+                usage_online._remembered(self.store, "p", 900, False, self._ask(boom))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_failure_is_forgotten_long_before_an_answer_would_be(self):
+        boom = usage_online.Unavailable("not signed in")
+        with self.assertRaises(usage_online.Unavailable):
+            usage_online._remembered(self.store, "p", 900, False, self._ask(boom),
+                                     error_seconds=0)
+        # Signed in since: the next ask goes through rather than waiting 15 minutes.
+        got = usage_online._remembered(self.store, "p", 900, False, self._ask("x"),
+                                       error_seconds=0)
+        self.assertEqual(got, "x")
+        self.assertEqual(len(self.calls), 2)
+
 if __name__ == "__main__":
     unittest.main()
