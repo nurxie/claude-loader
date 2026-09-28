@@ -365,10 +365,13 @@ in several profiles at the same time hasn't been tested.
   recolor), CLI commands, launching, detecting running profiles, link routing
   and pasted links, the setup wizard, the manager and the uninstaller. The
   update check was run against Anthropic's real repository.
-- Run on a real Ubuntu 22.04 GNOME (Wayland) desktop with Claude Desktop
-  installed: the loader window and every dialog it opens, the GNOME hotkey, the
-  menu entries, and the token usage window and loader cards against a real
-  signed-in account — percentages, reset times and the near-the-limit warning.
+- Run on a real **Ubuntu 22.04.5 LTS** desktop: GNOME 42.9 on Wayland, GTK
+  4.6.9, libadwaita 1.1.7, Python 3.10.12, x86_64, with Claude Code 2.1.224 and
+  Claude Desktop 2.7032.0 — which updated itself to 2.9939.4 along the way,
+  without anything breaking. Covered: the loader window and every dialog it
+  opens, the GNOME hotkey, the menu entries, and the token usage window and the
+  loader cards against real signed-in accounts — percentages, reset times,
+  per-profile accounts and the near-the-limit warning.
 - **Not yet tested:** several real Claude Desktop instances side by side, and
   `claude://` link routing with a live sign-in.
 

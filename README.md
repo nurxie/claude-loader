@@ -102,6 +102,21 @@ The OS pages explain both.
 
 ---
 
+## Tested on
+
+| System | How far |
+| --- | --- |
+| **Ubuntu 22.04.5 LTS** — GNOME 42.9 on Wayland, GTK 4.6.9 / libadwaita 1.1.7, Python 3.10.12, x86_64 | A real desktop with Claude Code 2.1.224 and Claude Desktop 2.7032.0, which updated itself to 2.9939.4 along the way without anything breaking: the installer, the loader window and every dialog it opens, the GNOME hotkey, the menu entries, the `claude://` handler, and the token figures against real signed-in accounts — percentages, reset times, per-profile accounts and the near-the-limit warning |
+| **Ubuntu 24.04** | The same suite in WSL against a stand-in for Claude Desktop: config, passwords, menu entries, icons, CLI commands, launching, running detection, link routing, the wizard, the manager and the uninstaller |
+| **Windows 10 and 11** | Real machines: the installer, the loader, profile shortcuts and the `claude-<name>` commands. Alongside an automated suite in an isolated sandbox — temporary AppData, mocked registry and known folders — covering shortcuts, PATH, `claude://` registration and restore, launching, running detection and the copy/update logic |
+| Everywhere | `python3 -m unittest discover -s tests -t tests` — 131 tests over the shared code, run by CI on Python 3.10 and 3.12 |
+
+What 1.0.0 added to the Windows interface — the usage bar on the loader cards
+and the tray agent's warning — was written and verified on Linux; the shared
+half is covered by the test suite, the Tk layout is not.
+
+---
+
 ## Repository layout
 
 ```

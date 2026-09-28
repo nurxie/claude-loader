@@ -416,9 +416,13 @@ Cowork at a time. Chat and the Code tab aren't affected.
   were written against a live Anthropic endpoint and verified end to end **on
   Linux**; the shared half of that code is covered by the test suite on every
   system.
-- **Not yet tested for real on Windows:** the tray agent (hotkey, tray menu and
-  its warning balloon), the usage bar on the loader cards, starting real Claude
-  instances from the loader, `claude://` routing with a real Google sign-in, and
-  the classic (Squirrel) installer.
+- Run on real Windows 10 and 11 machines: the installer, the loader, the
+  profile shortcuts and the `claude-<name>` commands.
+- **Added in 1.0.0 and not yet exercised here:** the usage bar on the loader
+  cards and the tray agent's near-the-limit balloon. Both were written and
+  verified on Linux, and the half they share with every system is covered by the
+  test suite; what has not been seen on Windows is the Tk layout around them.
+- **Still unverified:** `claude://` routing with a real Google sign-in, and the
+  classic (Squirrel) installer.
 
 How it all fits together, for reading or changing the code: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
