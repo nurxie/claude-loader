@@ -41,6 +41,10 @@ Claude Loader is free, open-source software under the [MIT license](LICENSE).
 
 ## Quick start
 
+**[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) is the full walkthrough** —
+every question the wizard asks, how to sign each profile in, and what each part
+of the windows does, with screenshots. The short version:
+
 **Windows:** double-click `windows\Install.cmd`, then follow the wizard.
 
 **Linux:**
@@ -122,7 +126,9 @@ half is covered by the test suite, the Tk layout is not.
 ```
 README.md                  this page
 LICENSE                    MIT
+docs/GETTING-STARTED.md    installing and using it, with screenshots
 docs/ARCHITECTURE.md       how it is built, for reading or changing the code
+docs/images/               the screenshots that page uses
 cross-platform/            shared core (Python): profiles, passwords, icons,
                            launching, link routing, token figures, wizard/manager
 linux/                     Linux part + install.sh
@@ -130,6 +136,10 @@ windows/                   Windows part + Install.cmd / install.ps1
 windows/legacy/            the original two-shortcut PowerShell script
 tests/                     python3 -m unittest discover -s tests -t tests
 ```
+
+**[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)** is the user guide:
+installing on either system, every wizard question explained, signing profiles
+in, and a field-by-field tour of the loader, the token window and the settings.
 
 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** is the technical documentation:
 the two settings the whole thing rests on, how the core and the OS parts are
@@ -151,6 +161,7 @@ Community projects built on the same idea:
 
 ## License
 
-[MIT](LICENSE). Claude is a trademark of Anthropic. This repository doesn't
-ship any Anthropic artwork: profile icons are generated on your machine from
-the installed app's own icon.
+[MIT](LICENSE). Claude is a trademark of Anthropic. This repository ships no
+Anthropic artwork as an asset: profile icons are generated on your machine from
+the icon of the Claude you installed. The screenshots under `docs/` show the
+program running, icons and all, the way any screenshot of an application does.
